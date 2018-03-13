@@ -30,7 +30,7 @@ DEFINE_ENUM_STRINGS(DEVICE_TWIN_UPDATE_STATE, DEVICE_TWIN_UPDATE_STATE_VALUES);
 /*String containing Hostname, Device Id & Device Key in the format:                         */
 /*  "HostName=<host_name>;DeviceId=<device_id>;SharedAccessKey=<device_key>"                */
 /*  "HostName=<host_name>;DeviceId=<device_id>;SharedAccessSignature=<device_sas_token>"    */
-static const char* connectionString = "[device connection string]";
+static const char* connectionString = "HostName=iot-sdks-test.azure-devices.net;DeviceId=ewertons-device1;SharedAccessKey=hT4tkv1auVqMUCZ0HWZFQC0lyuHFf6decNPuc+ZhWCg=";
 
 static char msgText[1024];
 static char propText[1024];
@@ -43,6 +43,11 @@ static void deviceTwinCallback(DEVICE_TWIN_UPDATE_STATE update_state, const unsi
 
     printf("Device Twin update received (state=%s, size=%zu): %s\r\n", 
         ENUM_TO_STRING(DEVICE_TWIN_UPDATE_STATE, update_state), size, payLoad);
+ 
+    if (update_state == DEVICE_TWIN_UPDATE_PARTIAL)
+    {
+        g_continueRunning = false;
+    }
 }
 
 static void reportedStateCallback(int status_code, void* userContextCallback)
@@ -50,7 +55,7 @@ static void reportedStateCallback(int status_code, void* userContextCallback)
     (void)userContextCallback;
     printf("Device Twin reported properties update completed with result: %d\r\n", status_code);
 
-    g_continueRunning = false;
+    //g_continueRunning = false;
 }
 
 
@@ -107,6 +112,9 @@ void iothub_client_sample_device_twin_run(void)
                 IoTHubClient_LL_DoWork(iotHubClientHandle);
                 ThreadAPI_Sleep(1);
             }
+
+            (void)printf("Press enter to terminate...\r\n");
+            (void)getchar();
 
             IoTHubClient_LL_Destroy(iotHubClientHandle);
         }

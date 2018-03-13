@@ -80,6 +80,12 @@ typedef struct SEND_C2D_CONTEXT_TAG
     IOTHUB_LONGHAUL_RESOURCES* iotHubLonghaul;
 } SEND_C2D_CONTEXT;
 
+typedef struct SEND_TWIN_REPORTED_CONTEXT_TAG
+{
+    unsigned int update_id;
+    IOTHUB_LONGHAUL_RESOURCES* iotHubLonghaul;
+} SEND_TWIN_REPORTED_CONTEXT;
+
 static time_t add_seconds(time_t base_time, int seconds)
 {
     time_t new_time;
@@ -312,7 +318,6 @@ static char* create_twin_desired_properties_update(const char* test_id, unsigned
 
     return result;
 }
-
 
 static void connection_status_callback(IOTHUB_CLIENT_CONNECTION_STATUS status, IOTHUB_CLIENT_CONNECTION_STATUS_REASON reason, void* userContextCallback)
 {
@@ -1361,7 +1366,7 @@ static int update_device_twin_desired_property(const void* context)
 
             if (iothub_client_statistics_add_device_twin_desired_info(iotHubLonghaul->iotHubClientStats, DEVICE_TWIN_UPDATE_SENT, &device_twin_info) != 0)
             {
-                LogError("Failed adding device method statistics info (update_id=%d)", update_id);
+                LogError("Failed adding twin reported properties statistics info (update_id=%d)", update_id);
                 result = __FAILURE__;
             }
             else
@@ -1370,6 +1375,98 @@ static int update_device_twin_desired_property(const void* context)
             }
 
             free(message);
+        }
+    }
+
+    return result;
+}
+
+static void on_twin_report_state_completed(int status_code, void* userContextCallback)
+{
+    if (userContextCallback == NULL)
+    {
+        LogError("Invalid argument (userContextCallback=NULL)");
+    }
+    else
+    {
+        SEND_TWIN_REPORTED_CONTEXT* send_context = (SEND_TWIN_REPORTED_CONTEXT*)userContextCallback;
+        DEVICE_TWIN_REPORTED_INFO device_twin_info;
+        device_twin_info.update_id = send_context->update_id;
+        device_twin_info.time_queued = time(NULL);
+
+        if (iothub_client_statistics_add_device_twin_reported_info(send_context->iotHubLonghaul->iotHubClientStats, DEVICE_TWIN_UPDATE_SENT, &device_twin_info) != 0)
+        {
+            LogError("Failed adding device twin reported properties statistics info (update_id=%d)", send_context->update_id);
+        }
+
+        free(send_context);
+    }
+}
+
+static void check_for_reported_properties_update_on_service_side(IOTHUB_LONGHAUL_RESOURCES* iotHubLonghaul)
+{
+
+}
+
+static int update_device_twin_reported_property(const void* context)
+{
+    int result;
+    IOTHUB_LONGHAUL_RESOURCES* iotHubLonghaul = (IOTHUB_LONGHAUL_RESOURCES*)context;
+    unsigned int update_id;
+
+    check_for_reported_properties_update_on_service_side(iotHubLonghaul);
+
+    if ((update_id = generate_unique_id(iotHubLonghaul)) == 0)
+    {
+        LogError("Failed generating device method id");
+        result = __FAILURE__;
+    }
+    else
+    {
+        SEND_TWIN_REPORTED_CONTEXT* send_context;
+
+        if ((send_context = malloc(sizeof(SEND_TWIN_REPORTED_CONTEXT))) == NULL)
+        {
+            LogError("Failed allocating context for sending twin reported update");
+            result = __FAILURE__;
+        }
+        else
+        {
+            char* message;
+
+            send_context->update_id = update_id;
+            send_context->iotHubLonghaul = iotHubLonghaul;
+
+            if ((message = create_message(iotHubLonghaul->test_id, update_id)) == NULL)
+            {
+                LogError("Failed creating twin reported property update");
+                free(send_context);
+                result = __FAILURE__;
+            }
+            else
+            {
+                DEVICE_TWIN_REPORTED_INFO device_twin_info;
+                device_twin_info.update_id = update_id;
+                device_twin_info.time_queued = time(NULL);
+
+                if ((device_twin_info.update_result = IoTHubClient_SendReportedState(iotHubLonghaul->iotHubClientHandle, message, strlen(message), on_twin_report_state_completed, send_context)) != IOTHUB_CLIENT_OK)
+                {
+                    LogError("Failed sending twin reported properties update");
+                    free(send_context);
+                }
+
+                if (iothub_client_statistics_add_device_twin_desired_info(iotHubLonghaul->iotHubClientStats, DEVICE_TWIN_UPDATE_SENT, &device_twin_info) != 0)
+                {
+                    LogError("Failed adding device twin reported properties statistics info (update_id=%d)", update_id);
+                    result = __FAILURE__;
+                }
+                else
+                {
+                    result = 0;
+                }
+
+                free(message);
+            }
         }
     }
 
@@ -1724,9 +1821,73 @@ int longhaul_run_twin_desired_properties_tests(IOTHUB_LONGHAUL_RESOURCES_HANDLE 
 
 int longhaul_run_twin_reported_properties_tests(IOTHUB_LONGHAUL_RESOURCES_HANDLE handle, size_t iterationDurationInSeconds, size_t totalDurationInSeconds)
 {
-    (void)handle;
-    (void)iterationDurationInSeconds;
-    (void)totalDurationInSeconds;
-    // TO BE SENT ON A SEPARATE CODE REVIEW
-    return 0;
+    int result;
+
+    if (handle == NULL)
+    {
+        LogError("Invalig argument (handle is NULL)");
+        result = __FAILURE__;
+    }
+    else
+    {
+        IOTHUB_LONGHAUL_RESOURCES* iotHubLonghaul = (IOTHUB_LONGHAUL_RESOURCES*)handle;
+
+        if (iotHubLonghaul->iotHubClientHandle == NULL || iotHubLonghaul->deviceInfo == NULL)
+        {
+            LogError("IoTHubClient not initialized.");
+            result = __FAILURE__;
+        }
+        else if (longhaul_initialize_service_client(iotHubLonghaul) == NULL)
+        {
+            LogError("Failed to initialize IoT hub service client");
+            result = __FAILURE__;
+        }
+        else if (longhaul_initialize_service_device_twin_client(iotHubLonghaul) == NULL)
+        {
+            LogError("Failed to initialize IoT hub service device twin client");
+            result = __FAILURE__;
+        }
+        else
+        {
+            int loop_result;
+            IOTHUB_CLIENT_STATISTICS_HANDLE stats_handle;
+
+            loop_result = run_on_loop(update_device_twin_reported_property, iterationDurationInSeconds, totalDurationInSeconds, iotHubLonghaul);
+
+            stats_handle = longhaul_get_statistics(iotHubLonghaul);
+
+            LogInfo("Longhaul Device Twin Reported Properties stats: %s", iothub_client_statistics_to_json(stats_handle));
+
+            if (loop_result != 0)
+            {
+                result = __FAILURE__;
+            }
+            else
+            {
+                IOTHUB_CLIENT_STATISTICS_DEVICE_TWIN_SUMMARY summary;
+
+                if (iothub_client_statistics_get_device_twin_reported_summary(stats_handle, &summary) != 0)
+                {
+                    LogError("Failed gettting statistics summary");
+                    result = __FAILURE__;
+                }
+                else
+                {
+                    LogInfo("Summary: Updates sent=%d, received=%d; travel time: min=%f secs, max=%f secs",
+                        summary.updates_sent, summary.updates_received, summary.min_travel_time_secs, summary.max_travel_time_secs);
+
+                    if (summary.updates_sent == 0 || summary.updates_received != summary.updates_sent || summary.max_travel_time_secs > MAX_TWIN_REPORTED_PROP_TRAVEL_TIME_SECS)
+                    {
+                        result = __FAILURE__;
+                    }
+                    else
+                    {
+                        result = 0;
+                    }
+                }
+            }
+        }
+    }
+
+    return result;
 }

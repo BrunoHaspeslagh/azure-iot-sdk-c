@@ -33,6 +33,7 @@ DEFINE_ENUM(C2D_EVENT_TYPE, C2D_EVENT_TYPE_VALUES)
 DEFINE_ENUM(DEVICE_METHOD_EVENT_TYPE, DEVICE_METHOD_EVENT_TYPE_VALUES)
 
 #define DEVICE_TWIN_EVENT_TYPE_VALUES \
+    DEVICE_TWIN_UPDATE_QUEUED, \
     DEVICE_TWIN_UPDATE_SENT, \
     DEVICE_TWIN_UPDATE_RECEIVED
 
@@ -108,6 +109,19 @@ typedef struct DEVICE_TWIN_INFO_TAG
 
     time_t time_received;
 } DEVICE_TWIN_INFO;
+
+typedef struct DEVICE_TWIN_REPORTED_INFO_TAG
+{
+    size_t update_id;
+
+    time_t time_queued;
+    IOTHUB_CLIENT_RESULT update_result;
+
+    time_t time_sent;
+    int send_status_code;
+
+    time_t time_received;
+} DEVICE_TWIN_REPORTED_INFO;
 
 typedef struct IOTHUB_CLIENT_STATISTICS_DEVICE_TWIN_SUMMARY_TAG
 {

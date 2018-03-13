@@ -1243,7 +1243,7 @@ int iothub_client_statistics_get_device_twin_desired_summary(IOTHUB_CLIENT_STATI
     return result;
 }
 
-int iothub_client_statistics_add_device_twin_reported_info(IOTHUB_CLIENT_STATISTICS_HANDLE handle, DEVICE_TWIN_EVENT_TYPE type, DEVICE_TWIN_INFO* info)
+int iothub_client_statistics_add_device_twin_reported_info(IOTHUB_CLIENT_STATISTICS_HANDLE handle, DEVICE_TWIN_EVENT_TYPE type, DEVICE_TWIN_REPORTED_INFO* info)
 {
     int result;
 
@@ -1255,6 +1255,8 @@ int iothub_client_statistics_add_device_twin_reported_info(IOTHUB_CLIENT_STATIST
     else
     {
         IOTHUB_CLIENT_STATISTICS_HANDLE stats = (IOTHUB_CLIENT_STATISTICS*)handle;
+
+        // TODO: split the damn thing.
 
         result = iothub_client_statistics_add_device_twin_info(stats->twin_reported_properties, type, info);
     }
@@ -1274,6 +1276,8 @@ int iothub_client_statistics_get_device_twin_reported_summary(IOTHUB_CLIENT_STAT
     else
     {
         IOTHUB_CLIENT_STATISTICS_HANDLE stats = (IOTHUB_CLIENT_STATISTICS*)handle;
+
+        // TODO: split the damn thing.
 
         iothub_client_statistics_get_device_twin_summary(stats->twin_reported_properties, summary);
 
