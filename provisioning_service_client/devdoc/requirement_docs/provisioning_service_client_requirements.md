@@ -17,13 +17,16 @@ int prov_sc_create_or_update_individual_enrollment(PROVISIONING_SERVICE_CLIENT_H
 int prov_sc_delete_individual_enrollment(PROVISIONING_SERVICE_CLIENT_HANDLE prov_client, INDIVIDUAL_ENROLLMENT_HANDLE enrollment);
 int prov_sc_delete_individual_enrollment_by_param(PROVISIONING_SERVICE_CLIENT_HANDLE prov_client, const char* reg_id, const char* etag);
 int prov_sc_run_individual_enrollment_bulk_operation(PROVISIONING_SERVICE_CLIENT_HANDLE prov_client, PROVISIONING_BULK_OPERATION* bulk_op, PROVISIONING_BULK_OPERATION_RESULT** bulk_res_ptr);
-int prov_sc_get_individual_enrollment(PROVISIONING_SERVICE_CLIENT_HANDLE prov_client, const char* id, INDIVIDUAL_ENROLLMENT_HANDLE* enrollment_ptr)
-int prov_sc_create_or_update_enrollment_group(PROVISIONING_SERVICE_CLIENT_HANDLE prov_client, ENROLLMENT_GROUP_HANDLE* enrollment_ptr)
-int prov_sc_delete_enrollment_group(PROVISIONING_SERVICE_CLIENT_HANDLE prov_client, ENROLLMENT_GROUP_HANDLE enrollment)
-int prov_sc_delete_enrollment_group_by_param(PROVISIONING_SERVICE_CLIENT_HANDLE prov_client, const char* group_id, const char* etag)
-int prov_sc_get_enrollment_group(PROVISIONING_SERVICE_CLIENT_HANDLE prov_client, const char* group_id, ENROLLMENT_GROUP_HANDLE* enrollment_ptr)
-int prov_sc_delete_device_registration_state(PROVISIONING_SERVICE_CLIENT_HANDLE prov_client, DEVICE_REGISTRATION_STATE_HANDLE reg_state_ptr)
-int prov_sc_get_device_registration_state(PROVISIONING_SERVICE_CLIENT_HANDLE prov_client, const char* id, DEVICE_REGISTRATION_STATE_HANDLE* reg_state_ptr)
+int prov_sc_query_individual_enrollment(PROVISIONING_SERVICE_CLIENT_HANDLE prov_client, PROVISIONING_QUERY_SPECIFICATION* query_spec, const char** cont_token_ptr, PROVISIONING_QUERY_RESPONSE** query_resp_ptr);
+int prov_sc_get_individual_enrollment(PROVISIONING_SERVICE_CLIENT_HANDLE prov_client, const char* id, INDIVIDUAL_ENROLLMENT_HANDLE* enrollment_ptr);
+int prov_sc_create_or_update_enrollment_group(PROVISIONING_SERVICE_CLIENT_HANDLE prov_client, ENROLLMENT_GROUP_HANDLE* enrollment_ptr);
+int prov_sc_delete_enrollment_group(PROVISIONING_SERVICE_CLIENT_HANDLE prov_client, ENROLLMENT_GROUP_HANDLE enrollment);
+int prov_sc_delete_enrollment_group_by_param(PROVISIONING_SERVICE_CLIENT_HANDLE prov_client, const char* group_id, const char* etag);
+int prov_sc_get_enrollment_group(PROVISIONING_SERVICE_CLIENT_HANDLE prov_client, const char* group_id, ENROLLMENT_GROUP_HANDLE* enrollment_ptr);
+int prov_sc_query_enrollment_group(PROVISIONING_SERVICE_CLIENT_HANDLE prov_client, PROVISIONING_QUERY_SPECIFICATION* query_spec, const char** cont_token_ptr, PROVISIONING_QUERY_RESPONSE** query_resp_ptr);
+int prov_sc_delete_device_registration_state(PROVISIONING_SERVICE_CLIENT_HANDLE prov_client, DEVICE_REGISTRATION_STATE_HANDLE reg_state_ptr);
+int prov_sc_get_device_registration_state(PROVISIONING_SERVICE_CLIENT_HANDLE prov_client, const char* id, DEVICE_REGISTRATION_STATE_HANDLE* reg_state_ptr);
+int prov_sc_query_device_registration_state(PROVISIONING_SERVICE_CLIENT_HANDLE prov_client, PROVISIONING_QUERY_SPECIFICATION* query_spec, const char** cont_token_ptr, PROVISIONING_QUERY_RESPONSE** query_resp_ptr);
 ```
 
 ### prov_sc_create_from_connection_string
@@ -292,16 +295,85 @@ int prov_sc_get_device_registration_state(PROVISIONING_SERVICE_CLIENT_HANDLE pro
 int prov_sc_run_individual_enrollment_bulk_operation(PROVISIONING_SERVICE_CLIENT_HANDLE prov_client, PROVISIONING_BULK_OPERATION* bulk_op, PROVISIONING_BULK_OPERATION_RESULT** bulk_res_ptr);
 ```
 
-**SRS_PROVISIONING_SERVICE_CLIENT_22_063: [** If `prov_client`, `bulk_op` or `bulk_res_ptr` are `NULL`, `prov_sc_run_individual_enrollment_bulk_operation` shall fail and return a non-zero value **]**
+**SRS_PROVISIONING_SERVICE_CLIENT_22_070: [** If `prov_client`, `bulk_op` or `bulk_res_ptr` are `NULL`, `prov_sc_run_individual_enrollment_bulk_operation` shall fail and return a non-zero value **]**
 
-**SRS_PROVISIONING_SERVICE_CLIENT_22_064: [** If `bulk_op` has invalid values, `prov_sc_run_individual_enrollment_bulk_operation` shall fail and return a non-zero value **]**
+**SRS_PROVISIONING_SERVICE_CLIENT_22_071: [** If `bulk_op` has invalid values, `prov_sc_run_individual_enrollment_bulk_operation` shall fail and return a non-zero value **]**
 
-**SRS_PROVISIONING_SERVICE_CLIENT_22_065: [** A 'POST' REST call shall be issued to run the bulk operation on the Provisoning Service **]**
+**SRS_PROVISIONING_SERVICE_CLIENT_22_072: [** A 'POST' REST call shall be issued to run the bulk operation on the Provisoning Service **]**
 
-**SRS_PROVISIONING_SERVICE_CLIENT_22_066: [** If the 'POST' REST call fails, `prov_sc_run_individual_enrollment_bulk_operation` shall fail and return a non-zero value **]**
+**SRS_PROVISIONING_SERVICE_CLIENT_22_073: [** If the 'POST' REST call fails, `prov_sc_run_individual_enrollment_bulk_operation` shall fail and return a non-zero value **]**
 
-**SRS_PROVISIONING_SERVICE_CLIENT_22_067: [** The data from the bulk operation response shall populate `bulk_res_ptr` **]**
+**SRS_PROVISIONING_SERVICE_CLIENT_22_074: [** The data from the bulk operation response shall populate `bulk_res_ptr` **]**
 
-**SRS_PROVISIONING_SERVICE_CLIENT_22_068: [** If populating `bulk_res_ptr` with the retrieved data fails, `prov_sc_run_individual_enrollment_bulk_operation` shall fail and return a non-zero value **]**
+**SRS_PROVISIONING_SERVICE_CLIENT_22_075: [** If populating `bulk_res_ptr` with the retrieved data fails, `prov_sc_run_individual_enrollment_bulk_operation` shall fail and return a non-zero value **]**
 
-**SRS_PROVISIONING_SERVICE_CLIENT_22_069: [** Upon successful population of `bulk_res_ptr`, `prov_sc_run_individual_enrollment_bulk_operation` shall return 0 **]**
+**SRS_PROVISIONING_SERVICE_CLIENT_22_076: [** Upon successful population of `bulk_res_ptr`, `prov_sc_run_individual_enrollment_bulk_operation` shall return 0 **]**
+
+
+### prov_sc_query_individual_enrollment
+
+```c
+int prov_sc_query_individual_enrollment(PROVISIONING_SERVICE_CLIENT_HANDLE prov_client, PROVISIONING_QUERY_SPECIFICATION* query_spec, const char** cont_token_ptr, PROVISIONING_QUERY_RESPONSE** query_resp_ptr);
+```
+
+**SRS_PROVISIONING_SERVICE_CLIENT_22_077: [** If `prov_client`, `query_spec`, `cont_token_ptr` or `query_resp_ptr` are `NULL`, `prov_sc_query_individual_enrollment` shall fail and return a non-zero value **]**
+
+**SRS_PROVISIONING_SERVICE_CLIENT_22_078: [** If `query_spec` has invalid values, `prov_sc_query_individual_enrollment` shall fail and return a non-zero value **]**
+
+**SRS_PROVISIONING_SERVICE_CLIENT_22_079: [** A 'POST' REST call shall be issued to run the query operation on the Provisioning Service **]**
+
+**SRS_PROVISIONING_SERVICE_CLIENT_22_080: [** If the 'POST' REST call fails, `prov_sc_query_individual_enrollment` shall fail and return a non-zero value **]**
+
+**SRS_PROVISIONING_SERVICE_CLIENT_22_081: [** The data from the query response shall populate `query_resp_ptr` **]**
+
+**SRS_PROVISIONING_SERVICE_CLIENT_22_082: [** If populating `query_resp_ptr` with the retrieved data fails, `prov_sc_query_individual_enrollment` shall fail and return a non-zero value **]**
+
+**SRS_PROVISIONING_SERVICE_CLIENT_22_083: [** A continuation token (if any) shall populate `cont_token_ptr` **]**
+
+**SRS_PROVISIONING_SERVICE_CLIENT_22_084: [** Upon success, `prov_sc_query_individual_enrollment` shall return 0 **]**
+
+
+### prov_sc_query_enrollment_group
+
+```c
+int prov_sc_query_enrollment_group(PROVISIONING_SERVICE_CLIENT_HANDLE prov_client, PROVISIONING_QUERY_SPECIFICATION* query_spec, const char** cont_token_ptr, PROVISIONING_QUERY_RESPONSE** query_resp_ptr);
+```
+
+**SRS_PROVISIONING_SERVICE_CLIENT_22_085: [** If `prov_client`, `query_spec`, `cont_token_ptr` or `query_resp_ptr` are `NULL`, `prov_sc_query_enrollment_group` shall fail and return a non-zero value **]**
+
+**SRS_PROVISIONING_SERVICE_CLIENT_22_086: [** If `query_spec` has invalid values, `prov_sc_query_enrollment_group` shall fail and return a non-zero value **]**
+
+**SRS_PROVISIONING_SERVICE_CLIENT_22_087: [** A 'POST' REST call shall be issued to run the query operation on the Provisioning Service **]**
+
+**SRS_PROVISIONING_SERVICE_CLIENT_22_088: [** If the 'POST' REST call fails, `prov_sc_query_enrollment_group` shall fail and return a non-zero value **]**
+
+**SRS_PROVISIONING_SERVICE_CLIENT_22_089: [** The data from the query response shall populate `query_resp_ptr` **]**
+
+**SRS_PROVISIONING_SERVICE_CLIENT_22_090: [** If populating `query_resp_ptr` with the retrieved data fails, `prov_sc_query_enrollment_group` shall fail and return a non-zero value **]**
+
+**SRS_PROVISIONING_SERVICE_CLIENT_22_091: [** A continuation token (if any) shall populate `cont_token_ptr` **]**
+
+**SRS_PROVISIONING_SERVICE_CLIENT_22_092: [** Upon success, `prov_sc_query_enrollment_group` shall return 0 **]**
+
+
+### prov_sc_query_device_registration_state
+
+```c
+int prov_sc_query_device_registration_state(PROVISIONING_SERVICE_CLIENT_HANDLE prov_client, PROVISIONING_QUERY_SPECIFICATION* query_spec, const char** cont_token_ptr, PROVISIONING_QUERY_RESPONSE** query_resp_ptr);
+```
+
+**SRS_PROVISIONING_SERVICE_CLIENT_22_093: [** If `prov_client`, `query_spec`, `cont_token_ptr` or `query_resp_ptr` are `NULL`, `prov_sc_query_device_registration_state` shall fail and return a non-zero value **]**
+
+**SRS_PROVISIONING_SERVICE_CLIENT_22_094: [** If `query_spec` has invalid values, `prov_sc_query_device_registration_state` shall fail and return a non-zero value **]**
+
+**SRS_PROVISIONING_SERVICE_CLIENT_22_095: [** A 'POST' REST call shall be issued to run the query operation on the Provisioning Service **]**
+
+**SRS_PROVISIONING_SERVICE_CLIENT_22_096: [** If the 'POST' REST call fails, `prov_sc_query_device_registration_state` shall fail and return a non-zero value **]**
+
+**SRS_PROVISIONING_SERVICE_CLIENT_22_097: [** The data from the query response shall populate `query_resp_ptr` **]**
+
+**SRS_PROVISIONING_SERVICE_CLIENT_22_098: [** If populating `query_resp_ptr` with the retrieved data fails, `prov_sc_query_device_registration_state` shall fail and return a non-zero value **]**
+
+**SRS_PROVISIONING_SERVICE_CLIENT_22_099: [** A continuation token (if any) shall populate `cont_token_ptr` **]**
+
+**SRS_PROVISIONING_SERVICE_CLIENT_22_100: [** Upon success, `prov_sc_query_device_registration_state` shall return 0 **]**

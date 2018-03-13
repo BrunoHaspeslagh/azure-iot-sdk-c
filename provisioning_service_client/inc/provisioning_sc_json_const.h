@@ -102,7 +102,7 @@ static const char* QUERY_SPECIFICATION_JSON_KEY_QUERY = "query";
 
 static const char* QUERY_RESPONSE_HEADER_ITEM_TYPE_VALUE_INDIVIDUAL_ENROLLMENT = "Enrollment";
 static const char* QUERY_RESPONSE_HEADER_ITEM_TYPE_VALUE_ENROLLMENT_GROUP = "EnrollmentGroup";
-static const char* QUERY_RESPONSE_HEADER_ITEM_TYPE_VALUE_DEVICE_REGISTRATION_STATE = "DeviceRegistrationState";
+static const char* QUERY_RESPONSE_HEADER_ITEM_TYPE_VALUE_DEVICE_REGISTRATION_STATE = "DeviceRegistration";
 
 #ifdef __cplusplus
 }

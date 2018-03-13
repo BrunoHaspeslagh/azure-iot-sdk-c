@@ -178,6 +178,7 @@ static void on_http_reply_recv(void* callback_ctx, HTTP_CALLBACK_REASON request_
             if ((prov_client->response_headers = HTTPHeaders_Clone(responseHeadersHandle)) == NULL)
             {
                 LogError("Copying response headers failed");
+                prov_client->response_headers = NULL;
             }
         }
 
@@ -254,7 +255,7 @@ static HTTP_HEADERS_HANDLE construct_http_headers(const PROV_SERVICE_CLIENT* pro
     return result;
 }
 
-static int add_query_headers(HTTP_HEADERS_HANDLE headers, PROVISIONING_QUERY_SPECIFICATION* query_spec, const char* cont_token)
+static int add_query_headers(HTTP_HEADERS_HANDLE headers, size_t page_size, const char* cont_token)
 {
     int result = 0;
 
@@ -269,10 +270,10 @@ static int add_query_headers(HTTP_HEADERS_HANDLE headers, PROVISIONING_QUERY_SPE
 
     if (result == 0)
     {
-        if (query_spec->page_size != NULL)
+        if (page_size != NO_MAX_PAGE_SIZE)
         {
             char page_size_s[21]; //21 characters covers all 64bit numbers
-            sprintf(page_size_s, "%d", *(query_spec->page_size));
+            sprintf(page_size_s, "%d", page_size);
             if (HTTPHeaders_AddHeaderNameValuePair(headers, HEADER_KEY_MAX_ITEM_COUNT, page_size_s) != HTTP_HEADERS_OK)
             {
                 LogError("Failure adding max item count header");
@@ -734,9 +735,9 @@ static int prov_sc_query_records(PROVISIONING_SERVICE_CLIENT_HANDLE prov_client,
         LogError("Invalid Provisioning Client Handle");
         result = __FAILURE__;
     }
-    else if (query_spec == NULL)
+    else if (query_spec == NULL || query_spec->version != PROVISIONING_QUERY_SPECIFICATION_VERSION_1)
     {
-        LogError("Invalid Query");
+        LogError("Invalid Query details");
         result = __FAILURE__;
     }
     else if (cont_token_ptr == NULL)
@@ -751,15 +752,17 @@ static int prov_sc_query_records(PROVISIONING_SERVICE_CLIENT_HANDLE prov_client,
     }
     else
     {
-        char* content;
-        if ((content = querySpecification_serializeToJson(query_spec)) == NULL)
+        char* content = NULL;
+
+        //do not serialize the query specification if there is no query_string (i.e. DRS query)
+        if ((query_spec->query_string != NULL) && ((content = querySpecification_serializeToJson(query_spec)) == NULL))
         {
             LogError("Failure serializing query specification");
             result = __FAILURE__;
         }
         else
         {
-            STRING_HANDLE registration_path = create_registration_path(path_format, NULL);
+            STRING_HANDLE registration_path = create_registration_path(path_format, query_spec->registration_id);
             if (registration_path == NULL)
             {
                 LogError("Failed to construct a registration path");
@@ -773,7 +776,7 @@ static int prov_sc_query_records(PROVISIONING_SERVICE_CLIENT_HANDLE prov_client,
                     LogError("Failure constructing http headers");
                     result = __FAILURE__;
                 }
-                else if ((add_query_headers(request_headers, query_spec, *cont_token_ptr)) != 0)
+                else if ((add_query_headers(request_headers, query_spec->page_size, *cont_token_ptr)) != 0)
                 {
                     LogError("Failure adding query headers");
                     result = __FAILURE__;
@@ -793,14 +796,19 @@ static int prov_sc_query_records(PROVISIONING_SERVICE_CLIENT_HANDLE prov_client,
                             LogError("Failure reading response headers");
                             result = __FAILURE__;
                         }
-                        else if ((type = queryType_stringToEnum(resp_type)) == QUERY_INVALID)
+                        else if ((type = queryType_stringToEnum(resp_type)) == QUERY_TYPE_INVALID)
                         {
                             LogError("Failure to parse response type");
+                            result = __FAILURE__;
                         }
                         else if ((*query_res_ptr = queryResponse_deserializeFromJson(prov_client->response, type)) == NULL)
                         {
                             LogError("Failure deserializing query response");
                             result = __FAILURE__;
+                        }
+                        else
+                        {
+                            *cont_token_ptr = new_cont_token;
                         }
                     }
                     else
@@ -831,6 +839,7 @@ void prov_sc_destroy(PROVISIONING_SERVICE_CLIENT_HANDLE prov_client)
         free(prov_client->key_name);
         free(prov_client->access_key);
         free(prov_client->response);
+        HTTPHeaders_Free(prov_client->response_headers);
         free(prov_client->certificate);
         free(prov_client);
     }

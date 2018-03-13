@@ -47,6 +47,7 @@ static void real_free(void* ptr)
 #undef ENABLE_MOCKS
 
 #include "provisioning_service_client.h"
+#include "provisioning_sc_json_const.h"
 
 typedef enum {RESPONSE_ON, RESPONSE_OFF} response_switch;
 typedef enum {CERT, NO_CERT} cert_flag;
@@ -119,6 +120,7 @@ static IO_INTERFACE_DESCRIPTION* TEST_IO_INTERFACE_DESC = (IO_INTERFACE_DESCRIPT
 static STRING_HANDLE TEST_STRING_HANDLE = (STRING_HANDLE)0x11111119;
 static DEVICE_REGISTRATION_STATE_HANDLE TEST_DEVICE_REGISTRATION_STATE_HANDLE = (DEVICE_REGISTRATION_STATE_HANDLE)0x11111120;
 #define TEST_INDIVIDUAL_ENROLLMENT_HANDLE2 (INDIVIDUAL_ENROLLMENT_HANDLE)0x11111121
+#define TEST_HTTP_HEADERS_HANDLE (HTTP_HEADERS_HANDLE)0x11111122
 static const unsigned char* TEST_REPLY_JSON = (const unsigned char*)"{my-json-reply}";
 static const char* TEST_ENROLLMENT_JSON = "{my-json-serialized-enrollment}";
 static const char* TEST_CONNECTION_STRING = "my-connection-string";
@@ -135,6 +137,9 @@ static const char* TEST_TRUSTED_CERT = "my-trusted-cert";
 static const char* TEST_PROXY_HOSTNAME = "my-proxy-hostname";
 static const char* TEST_PROXY_USERNAME = "my-username";
 static const char* TEST_PROXY_PASSWORD = "my-password";
+static const char* TEST_QUERY_STRING = "*";
+static const char* TEST_CONT_TOKEN = "cont";
+static const char* TEST_CONT_TOKEN2 = "cont2";
 static int TEST_PROXY_PORT = 123;
 static size_t TEST_REPLY_JSON_LEN = 15;
 static unsigned int STATUS_CODE_SUCCESS = 204;
@@ -216,7 +221,7 @@ static void my_uhttp_client_dowork(HTTP_CLIENT_HANDLE handle)
         g_on_http_open(g_http_open_ctx, HTTP_CALLBACK_REASON_OK);
     else if (g_uhttp_client_dowork_call_count == 1)
     {
-        g_on_http_reply_recv(g_http_reply_recv_ctx, HTTP_CALLBACK_REASON_OK, content, 1, STATUS_CODE_SUCCESS, NULL);
+        g_on_http_reply_recv(g_http_reply_recv_ctx, HTTP_CALLBACK_REASON_OK, content, 1, STATUS_CODE_SUCCESS, TEST_HTTP_HEADERS_HANDLE);
     }
     g_uhttp_client_dowork_call_count++;
 }
@@ -271,6 +276,12 @@ static int my_mallocAndStrcpy_overwrite(char** destination, const char* source)
 
 static HTTP_HEADERS_HANDLE my_HTTPHeaders_Alloc(void)
 {
+    return (HTTP_HEADERS_HANDLE)real_malloc(1);
+}
+
+static HTTP_HEADERS_HANDLE my_HTTPHeaders_Clone(HTTP_HEADERS_HANDLE handle)
+{
+    (void)handle;
     return (HTTP_HEADERS_HANDLE)real_malloc(1);
 }
 
@@ -344,6 +355,17 @@ static PROVISIONING_BULK_OPERATION_RESULT* my_bulkOperationResult_deserializeFro
     return result;
 }
 
+static PROVISIONING_QUERY_RESPONSE* my_queryResponse_deserializeFromJson(const char* json_string, PROVISIONING_QUERY_TYPE type)
+{
+    (void)type;
+    PROVISIONING_QUERY_RESPONSE* result;
+    if (json_string != NULL)
+        result = (PROVISIONING_QUERY_RESPONSE*)real_malloc(1);
+    else
+        result = NULL;
+    return result;
+}
+
 static void my_individualEnrollment_destroy(INDIVIDUAL_ENROLLMENT_HANDLE handle)
 {
     real_free(handle);
@@ -362,6 +384,39 @@ static void my_deviceRegistrationState_destroy(DEVICE_REGISTRATION_STATE_HANDLE 
 static void my_bulkOperationResult_free(PROVISIONING_BULK_OPERATION_RESULT* bulk_res)
 {
     real_free(bulk_res);
+}
+
+static void my_queryResponse_free(PROVISIONING_QUERY_RESPONSE* query_resp)
+{
+    real_free(query_resp);
+}
+
+static PROVISIONING_QUERY_TYPE my_queryType_stringToEnum(const char* string)
+{
+    PROVISIONING_QUERY_TYPE result;
+
+    if (string == NULL)
+    {
+        result = QUERY_TYPE_INVALID;
+    }
+    else if (strcmp(string, QUERY_RESPONSE_HEADER_ITEM_TYPE_VALUE_INDIVIDUAL_ENROLLMENT) == 0)
+    {
+        result = QUERY_TYPE_INDIVIDUAL_ENROLLMENT;
+    }
+    else if (strcmp(string, QUERY_RESPONSE_HEADER_ITEM_TYPE_VALUE_ENROLLMENT_GROUP) == 0)
+    {
+        result = QUERY_TYPE_ENROLLMENT_GROUP;
+    }
+    else if (strcmp(string, QUERY_RESPONSE_HEADER_ITEM_TYPE_VALUE_DEVICE_REGISTRATION_STATE) == 0)
+    {
+        result = QUERY_TYPE_DEVICE_REGISTRATION_STATE;
+    }
+    else
+    {
+        result = QUERY_TYPE_INVALID;
+    }
+
+    return result;
 }
 
 static INDIVIDUAL_ENROLLMENT_HANDLE my_individualEnrollment_create(const char* reg_id, ATTESTATION_MECHANISM_HANDLE att_handle)
@@ -456,6 +511,16 @@ static char* my_bulkOperation_serializeToJson(const PROVISIONING_BULK_OPERATION*
     return result;
 }
 
+static char* my_querySpecification_serializeToJson(const PROVISIONING_QUERY_SPECIFICATION* query_spec)
+{
+    (void)query_spec;
+    char* result = NULL;
+    size_t len = strlen(TEST_ENROLLMENT_JSON);
+    result = (char*)real_malloc(len + 1);
+    strncpy(result, TEST_ENROLLMENT_JSON, len + 1);
+    return result;
+}
+
 static void register_global_mock_hooks()
 {
     REGISTER_GLOBAL_MOCK_HOOK(gballoc_malloc, real_malloc);
@@ -500,6 +565,9 @@ static void register_global_mock_hooks()
 
     REGISTER_GLOBAL_MOCK_HOOK(HTTPHeaders_Alloc, my_HTTPHeaders_Alloc);
     REGISTER_GLOBAL_MOCK_FAIL_RETURN(HTTPHeaders_Alloc, NULL);
+
+    REGISTER_GLOBAL_MOCK_HOOK(HTTPHeaders_Clone, my_HTTPHeaders_Clone);
+    REGISTER_GLOBAL_MOCK_FAIL_RETURN(HTTPHeaders_Clone, NULL);
 
     REGISTER_GLOBAL_MOCK_HOOK(HTTPHeaders_Free, my_HTTPHeaders_Free);
 
@@ -555,6 +623,17 @@ static void register_global_mock_hooks()
     REGISTER_GLOBAL_MOCK_FAIL_RETURN(bulkOperationResult_deserializeFromJson, NULL);
 
     REGISTER_GLOBAL_MOCK_HOOK(bulkOperationResult_free, my_bulkOperationResult_free);
+
+    REGISTER_GLOBAL_MOCK_HOOK(querySpecification_serializeToJson, my_querySpecification_serializeToJson);
+    REGISTER_GLOBAL_MOCK_FAIL_RETURN(querySpecification_serializeToJson, NULL);
+
+    REGISTER_GLOBAL_MOCK_HOOK(queryResponse_deserializeFromJson, my_queryResponse_deserializeFromJson);
+    REGISTER_GLOBAL_MOCK_FAIL_RETURN(queryResponse_deserializeFromJson, NULL);
+
+    REGISTER_GLOBAL_MOCK_HOOK(queryResponse_free, my_queryResponse_free);
+
+    REGISTER_GLOBAL_MOCK_HOOK(queryType_stringToEnum, my_queryType_stringToEnum);
+    REGISTER_GLOBAL_MOCK_FAIL_RETURN(queryType_stringToEnum, QUERY_TYPE_INVALID);
 }
 
 static void register_global_mock_returns()
@@ -577,14 +656,7 @@ static void register_global_mock_returns()
     REGISTER_GLOBAL_MOCK_RETURN(STRING_construct, TEST_STRING_HANDLE);
     REGISTER_GLOBAL_MOCK_FAIL_RETURN(STRING_construct, NULL);
 
-    //REGISTER_GLOBAL_MOCK_RETURN(STRING_construct_sprintf, TEST_STRING_HANDLE);
-    //REGISTER_GLOBAL_MOCK_FAIL_RETURN(STRING_construct_sprintf, NULL);
-
-    //REGISTER_GLOBAL_MOCK_RETURN(STRING_sprintf, 0);
-    //REGISTER_GLOBAL_MOCK_FAIL_RETURN(STRING_sprintf, __FAILURE__);
-
     REGISTER_GLOBAL_MOCK_RETURN(STRING_c_str, TEST_STRING);
-    //REGISTER_GLOBAL_MOCK_FAIL_RETURN(STRING_c_str, NULL);
 
     REGISTER_GLOBAL_MOCK_RETURN(http_proxy_io_get_interface_description, TEST_IO_INTERFACE_DESC);
 }
@@ -607,6 +679,7 @@ static void register_global_mock_alias_types()
     REGISTER_UMOCK_ALIAS_TYPE(ON_HTTP_CLOSED_CALLBACK, void*);
     REGISTER_UMOCK_ALIAS_TYPE(HTTP_CLIENT_HANDLE, void*);
     REGISTER_UMOCK_ALIAS_TYPE(HTTP_CLIENT_REQUEST_TYPE, int);
+    REGISTER_UMOCK_ALIAS_TYPE(PROVISIONING_QUERY_TYPE, int);
 }
 
 BEGIN_TEST_SUITE(provisioning_service_client_ut)
@@ -721,6 +794,18 @@ static void expected_calls_construct_http_headers(etag_flag etag_flag, HTTP_CLIE
     STRICT_EXPECTED_CALL(STRING_delete(IGNORED_PTR_ARG)); //does not fail
 }
 
+static void expected_calls_add_query_headers(bool has_page_size, bool has_cont_token)
+{
+    if (has_cont_token)
+    {
+        STRICT_EXPECTED_CALL(HTTPHeaders_AddHeaderNameValuePair(IGNORED_PTR_ARG, IGNORED_PTR_ARG, IGNORED_PTR_ARG));
+    }
+    if (has_page_size)
+    {
+        STRICT_EXPECTED_CALL(HTTPHeaders_AddHeaderNameValuePair(IGNORED_PTR_ARG, IGNORED_PTR_ARG, IGNORED_PTR_ARG));
+    }
+}
+
 static void expected_calls_connect_to_service()
 {
     if (g_proxy == PROXY)
@@ -740,11 +825,13 @@ static void expected_calls_rest_call(HTTP_CLIENT_REQUEST_TYPE request_type, resp
     STRICT_EXPECTED_CALL(uhttp_client_dowork(IGNORED_PTR_ARG)); //does not fail
     STRICT_EXPECTED_CALL(uhttp_client_execute_request(IGNORED_PTR_ARG, request_type, IGNORED_PTR_ARG, IGNORED_PTR_ARG, IGNORED_PTR_ARG, IGNORED_NUM_ARG, IGNORED_PTR_ARG, IGNORED_PTR_ARG));
     STRICT_EXPECTED_CALL(uhttp_client_dowork(IGNORED_PTR_ARG)); //does not fail
+    STRICT_EXPECTED_CALL(HTTPHeaders_Clone(IGNORED_PTR_ARG)); //this is in a callback for on_http_reply_recv
     if (response_flag == RESPONSE)
-        STRICT_EXPECTED_CALL(gballoc_malloc(IGNORED_NUM_ARG)); //this is in a callback for on_http_reply_recv
+    {
+        STRICT_EXPECTED_CALL(gballoc_malloc(IGNORED_NUM_ARG));  //this is also in the callback
+    }
     STRICT_EXPECTED_CALL(uhttp_client_close(IGNORED_PTR_ARG, IGNORED_PTR_ARG, IGNORED_PTR_ARG)); //does not fail
     STRICT_EXPECTED_CALL(uhttp_client_destroy(IGNORED_PTR_ARG)); //does not fail
-
 }
 
 /* UNIT TESTS BEGIN */
@@ -871,6 +958,7 @@ TEST_FUNCTION(prov_sc_destroy_GOLDEN)
     STRICT_EXPECTED_CALL(gballoc_free(IGNORED_PTR_ARG));
     STRICT_EXPECTED_CALL(gballoc_free(IGNORED_PTR_ARG));
     STRICT_EXPECTED_CALL(gballoc_free(IGNORED_PTR_ARG));
+    STRICT_EXPECTED_CALL(HTTPHeaders_Free(IGNORED_PTR_ARG));
     STRICT_EXPECTED_CALL(gballoc_free(IGNORED_PTR_ARG));
     STRICT_EXPECTED_CALL(gballoc_free(IGNORED_PTR_ARG));
 
@@ -1393,7 +1481,7 @@ TEST_FUNCTION(prov_sc_create_or_update_individual_enrollment_FAIL_null_etag)
 
     umock_c_negative_tests_snapshot();
 
-    size_t calls_cannot_fail[] = { 3, 4, 5, 7, 12, 14, 15, 19, 20, 21, 23, 24, 26, 27, 28, 29, 30 };
+    size_t calls_cannot_fail[] = { 3, 4, 5, 7, 12, 14, 15, 19, 20, 21, 22, 24, 25, 27, 28, 29, 30, 31 };
     size_t count = umock_c_negative_tests_call_count();
     size_t num_cannot_fail = sizeof(calls_cannot_fail) / sizeof(calls_cannot_fail[0]);
 
@@ -1456,7 +1544,7 @@ TEST_FUNCTION(prov_sc_create_or_update_individual_enrollment_FAIL_w_etag)
 
     umock_c_negative_tests_snapshot();
 
-    size_t calls_cannot_fail[] = { 3, 4, 5, 7, 12, 15, 16, 20, 21, 22, 24, 25, 27, 28, 29, 30, 31 };
+    size_t calls_cannot_fail[] = { 3, 4, 5, 7, 12, 15, 16, 20, 21, 22, 23, 25, 26, 28, 29, 30, 31, 32 };
     size_t count = umock_c_negative_tests_call_count();
     size_t num_cannot_fail = sizeof(calls_cannot_fail) / sizeof(calls_cannot_fail[0]);
 
@@ -1534,7 +1622,7 @@ TEST_FUNCTION(prov_sc_create_or_update_individual_enrollment_FAIL_ALL_HTTP_OPTIO
 
     umock_c_negative_tests_snapshot();
 
-    size_t calls_cannot_fail[] = { 3, 4, 5,  7, 12, 14, 15, 16, 22, 24, 26, 27, 29, 30, 31, 32, 33 };
+    size_t calls_cannot_fail[] = { 3, 4, 5,  7, 12, 14, 15, 16, 22, 24, 25, 27, 28, 30, 31, 32, 33, 34 };
     size_t count = umock_c_negative_tests_call_count();
     size_t num_cannot_fail = sizeof(calls_cannot_fail) / sizeof(calls_cannot_fail[0]);
 
@@ -1695,7 +1783,7 @@ TEST_FUNCTION(prov_sc_delete_individual_enrollment_FAIL)
 
     umock_c_negative_tests_snapshot();
 
-    size_t calls_cannot_fail[] = { 0, 3, 4, 6, 10, 13, 14, 18, 20, 21, 22, 23, 24, 25 };
+    size_t calls_cannot_fail[] = { 0, 3, 4, 6, 10, 13, 14, 18, 20, 21, 22, 23, 24, 25, 26 };
     size_t count = umock_c_negative_tests_call_count();
     size_t num_cannot_fail = sizeof(calls_cannot_fail) / sizeof(calls_cannot_fail[0]);
 
@@ -1841,7 +1929,7 @@ TEST_FUNCTION(prov_sc_delete_individual_enrollment_by_param_FAIL)
 
     umock_c_negative_tests_snapshot();
 
-    size_t calls_cannot_fail[] = { 1, 2, 4, 8, 11, 12, 16, 18, 19, 20, 21, 22, 23 };
+    size_t calls_cannot_fail[] = { 1, 2, 4, 8, 11, 12, 16, 18, 19, 20, 21, 22, 23, 24 };
 
     size_t count = umock_c_negative_tests_call_count();
     size_t num_cannot_fail = sizeof(calls_cannot_fail) / sizeof(calls_cannot_fail[0]);
@@ -1983,7 +2071,7 @@ TEST_FUNCTION(prov_sc_get_individual_enrollment_FAIL)
 
     umock_c_negative_tests_snapshot();
 
-    size_t calls_cannot_fail[] = { 1, 2, 4, 9, 11, 12, 16, 18, 20, 21, 23, 24, 25};
+    size_t calls_cannot_fail[] = { 1, 2, 4, 9, 11, 12, 16, 18, 19, 21, 22, 24, 25, 26};
     size_t count = umock_c_negative_tests_call_count();
     size_t num_cannot_fail = sizeof(calls_cannot_fail) / sizeof(calls_cannot_fail[0]);
 
@@ -2177,7 +2265,7 @@ TEST_FUNCTION(prov_sc_create_or_update_enrollment_group_FAIL_no_etag)
 
     umock_c_negative_tests_snapshot();
 
-    size_t calls_cannot_fail[] = { 3, 4, 5, 7, 12, 14, 15, 19, 20, 21, 23, 24, 26, 27, 28, 29, 30 };
+    size_t calls_cannot_fail[] = { 3, 4, 5, 7, 12, 14, 15, 19, 20, 21, 22, 24, 25, 27, 28, 29, 30, 31 };
     size_t count = umock_c_negative_tests_call_count();
     size_t num_cannot_fail = sizeof(calls_cannot_fail) / sizeof(calls_cannot_fail[0]);
 
@@ -2240,7 +2328,7 @@ TEST_FUNCTION(prov_sc_create_or_update_enrollment_group_FAIL_w_etag)
 
     umock_c_negative_tests_snapshot();
 
-    size_t calls_cannot_fail[] = { 3, 4, 5, 7, 12, 15, 16, 20, 21, 22, 24, 25, 27, 28, 29, 30, 31 };
+    size_t calls_cannot_fail[] = { 3, 4, 5, 7, 12, 15, 16, 20, 21, 22, 23, 25, 26, 28, 29, 30, 31, 32 };
     size_t count = umock_c_negative_tests_call_count();
     size_t num_cannot_fail = sizeof(calls_cannot_fail) / sizeof(calls_cannot_fail[0]);
 
@@ -2401,7 +2489,7 @@ TEST_FUNCTION(prov_sc_delete_enrollment_group_FAIL)
 
     umock_c_negative_tests_snapshot();
 
-    size_t calls_cannot_fail[] = { 0, 3, 4, 6, 10, 13, 14, 18, 20, 21, 22, 23, 24, 25 };
+    size_t calls_cannot_fail[] = { 0, 3, 4, 6, 10, 13, 14, 18, 20, 21, 22, 23, 24, 25, 26 };
     size_t count = umock_c_negative_tests_call_count();
     size_t num_cannot_fail = sizeof(calls_cannot_fail) / sizeof(calls_cannot_fail[0]);
 
@@ -2547,7 +2635,7 @@ TEST_FUNCTION(prov_sc_delete_enrollment_group_by_param_FAIL)
 
     umock_c_negative_tests_snapshot();
 
-    size_t calls_cannot_fail[] = { 1, 2, 4, 8, 11, 12, 16, 18, 19, 20, 21, 22, 23 };
+    size_t calls_cannot_fail[] = { 1, 2, 4, 8, 11, 12, 16, 18, 19, 20, 21, 22, 23, 24 };
     size_t count = umock_c_negative_tests_call_count();
     size_t num_cannot_fail = sizeof(calls_cannot_fail) / sizeof(calls_cannot_fail[0]);
 
@@ -2688,7 +2776,7 @@ TEST_FUNCTION(prov_sc_get_enrollment_group_FAIL)
 
     umock_c_negative_tests_snapshot();
 
-    size_t calls_cannot_fail[] = { 1, 2, 4, 9, 11, 12, 16, 18, 20, 21, 23, 24, 25 };
+    size_t calls_cannot_fail[] = { 1, 2, 4, 9, 11, 12, 16, 18, 19, 21, 22, 24, 25, 26 };
     size_t count = umock_c_negative_tests_call_count();
     size_t num_cannot_fail = sizeof(calls_cannot_fail) / sizeof(calls_cannot_fail[0]);
 
@@ -2830,7 +2918,7 @@ TEST_FUNCTION(prov_sc_get_device_registration_state_FAIL)
 
     umock_c_negative_tests_snapshot();
 
-    size_t calls_cannot_fail[] = { 1, 2, 4, 9, 11, 12, 16, 18, 20, 21, 23, 24, 25 };
+    size_t calls_cannot_fail[] = { 1, 2, 4, 9, 11, 12, 16, 18, 19, 21, 22, 24, 25, 26 };
     size_t count = umock_c_negative_tests_call_count();
     size_t num_cannot_fail = sizeof(calls_cannot_fail) / sizeof(calls_cannot_fail[0]);
 
@@ -2986,7 +3074,7 @@ TEST_FUNCTION(prov_sc_delete_device_registration_state_FAIL)
 
     umock_c_negative_tests_snapshot();
 
-    size_t calls_cannot_fail[] = { 0, 3, 4, 6, 10, 13, 14, 18, 20, 21, 22, 23, 24, 25 };
+    size_t calls_cannot_fail[] = { 0, 3, 4, 6, 10, 13, 14, 18, 20, 21, 22, 23, 24, 25, 26 };
     size_t count = umock_c_negative_tests_call_count();
     size_t num_cannot_fail = sizeof(calls_cannot_fail) / sizeof(calls_cannot_fail[0]);
 
@@ -3131,7 +3219,7 @@ TEST_FUNCTION(prov_sc_delete_device_registration_state_by_param_FAIL)
 
     umock_c_negative_tests_snapshot();
 
-    size_t calls_cannot_fail[] = { 1, 2, 4, 8, 11, 12, 16, 18, 19, 20, 21, 22, 23 };
+    size_t calls_cannot_fail[] = { 1, 2, 4, 8, 11, 12, 16, 18, 19, 20, 21, 22, 23, 24 };
     size_t count = umock_c_negative_tests_call_count();
     size_t num_cannot_fail = sizeof(calls_cannot_fail) / sizeof(calls_cannot_fail[0]);
 
@@ -3164,7 +3252,7 @@ TEST_FUNCTION(prov_sc_delete_device_registration_state_by_param_FAIL)
     umock_c_negative_tests_deinit();
 }
 
-/*Tests_PROVISIONING_SERVICE_CLIENT_22_063: [ If prov_client, bulk_op or bulk_res_ptr are NULL, prov_sc_run_individual_enrollment_bulk_operation shall fail and return a non-zero value ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_070: [ If prov_client, bulk_op or bulk_res_ptr are NULL, prov_sc_run_individual_enrollment_bulk_operation shall fail and return a non-zero value ]*/
 TEST_FUNCTION(prov_sc_run_individual_enrollment_bulk_operation_NULL_prov)
 {
     //arrange
@@ -3186,7 +3274,7 @@ TEST_FUNCTION(prov_sc_run_individual_enrollment_bulk_operation_NULL_prov)
     //cleanup
 }
 
-/*Tests_PROVISIONING_SERVICE_CLIENT_22_063: [ If prov_client, bulk_op or bulk_res_ptr are NULL, prov_sc_run_individual_enrollment_bulk_operation shall fail and return a non-zero value ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_070: [ If prov_client, bulk_op or bulk_res_ptr are NULL, prov_sc_run_individual_enrollment_bulk_operation shall fail and return a non-zero value ]*/
 TEST_FUNCTION(prov_sc_run_individual_enrollment_bulk_operation_NULL_bulkop)
 {
     //arrange
@@ -3205,7 +3293,7 @@ TEST_FUNCTION(prov_sc_run_individual_enrollment_bulk_operation_NULL_bulkop)
     prov_sc_destroy(sc);
 }
 
-/*Tests_PROVISIONING_SERVICE_CLIENT_22_063: [ If prov_client, bulk_op or bulk_res_ptr are NULL, prov_sc_run_individual_enrollment_bulk_operation shall fail and return a non-zero value ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_070: [ If prov_client, bulk_op or bulk_res_ptr are NULL, prov_sc_run_individual_enrollment_bulk_operation shall fail and return a non-zero value ]*/
 TEST_FUNCTION(prov_sc_run_individual_enrollment_bulk_operation_NULL_bulk_res)
 {
     //arrange
@@ -3229,7 +3317,7 @@ TEST_FUNCTION(prov_sc_run_individual_enrollment_bulk_operation_NULL_bulk_res)
     prov_sc_destroy(sc);
 }
 
-/*Tests_PROVISIONING_SERVICE_CLIENT_22_064: [ If bulk_op has invalid values, prov_sc_run_individual_enrollment_bulk_operation shall fail and return a non-zero value ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_071: [ If bulk_op has invalid values, prov_sc_run_individual_enrollment_bulk_operation shall fail and return a non-zero value ]*/
 TEST_FUNCTION(prov_sc_run_individual_enrollment_bulk_operation_invalid_bulkop_version)
 {
     //arrange
@@ -3254,9 +3342,9 @@ TEST_FUNCTION(prov_sc_run_individual_enrollment_bulk_operation_invalid_bulkop_ve
     prov_sc_destroy(sc);
 }
 
-/*Tests_PROVISIONING_SERVICE_CLIENT_22_065: [ A 'POST' REST call shall be issued to run the bulk operation on the Provisoning Service ]*/
-/*Tests_PROVISIONING_SERVICE_CLIENT_22_067: [ The data from the bulk operation response shall populate bulk_res_ptr ]*/
-/*Tests_PROVISIONING_SERVICE_CLIENT_22_069: [ Upon successful population of bulk_res_ptr, prov_sc_run_individual_enrollment_bulk_operation shall return 0 ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_072: [ A 'POST' REST call shall be issued to run the bulk operation on the Provisoning Service ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_074: [ The data from the bulk operation response shall populate bulk_res_ptr ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_076: [ Upon successful population of bulk_res_ptr, prov_sc_run_individual_enrollment_bulk_operation shall return 0 ]*/
 TEST_FUNCTION(prov_sc_run_individual_enrollment_bulk_operation_SUCCESS)
 {
     //arrange
@@ -3294,8 +3382,8 @@ TEST_FUNCTION(prov_sc_run_individual_enrollment_bulk_operation_SUCCESS)
     bulkOperationResult_free(bulk_res);
 }
 
-/*Tests_PROVISIONING_SERVICE_CLIENT_22_066: [ If the 'POST' REST call fails, prov_sc_run_individual_enrollment_bulk_operation shall fail and return a non-zero value ]*/
-/*Tests_PROVISIONING_SERVICE_CLIENT_22_068: [ If populating bulk_res_ptr with the retrieved data fails, prov_sc_run_individual_enrollment_bulk_operation shall fail and return a non-zero value ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_073: [ If the 'POST' REST call fails, prov_sc_run_individual_enrollment_bulk_operation shall fail and return a non-zero value ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_075: [ If populating bulk_res_ptr with the retrieved data fails, prov_sc_run_individual_enrollment_bulk_operation shall fail and return a non-zero value ]*/
 TEST_FUNCTION(prov_sc_run_individual_enrollment_bulk_operation_ERROR)
 {
     //arrange
@@ -3325,7 +3413,7 @@ TEST_FUNCTION(prov_sc_run_individual_enrollment_bulk_operation_ERROR)
 
     umock_c_negative_tests_snapshot();
 
-    size_t calls_cannot_fail[] = { 3, 8, 10, 11, 15, 17, 19, 20, 22, 23, 24, 25 };
+    size_t calls_cannot_fail[] = { 3, 8, 10, 11, 15, 17, 18, 20, 21, 23, 24, 25, 26 };
     size_t count = umock_c_negative_tests_call_count();
     size_t num_cannot_fail = sizeof(calls_cannot_fail) / sizeof(calls_cannot_fail[0]);
 
@@ -3356,6 +3444,1162 @@ TEST_FUNCTION(prov_sc_run_individual_enrollment_bulk_operation_ERROR)
     //cleanup
     prov_sc_destroy(sc);
     umock_c_negative_tests_deinit();
+}
+
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_077: [ If prov_client, query_spec, cont_token_ptr or query_resp_ptr are NULL, prov_sc_query_individual_enrollment shall fail and return a non-zero value ]*/
+TEST_FUNCTION(prov_sc_query_individual_enrollment_NULL_prov_client)
+{
+    //arrange
+    PROVISIONING_QUERY_SPECIFICATION qs = { 0 };
+    qs.page_size = NO_MAX_PAGE_SIZE;
+    qs.query_string = TEST_QUERY_STRING;
+    qs.version = PROVISIONING_QUERY_SPECIFICATION_VERSION_1;
+
+    char* cont_token = NULL;
+    PROVISIONING_QUERY_RESPONSE* query_resp = NULL;
+    umock_c_reset_all_calls();
+
+    //act
+    int res = prov_sc_query_individual_enrollment(NULL, &qs, &cont_token, &query_resp);
+
+    //assert
+    ASSERT_ARE_EQUAL(char_ptr, umock_c_get_expected_calls(), umock_c_get_actual_calls());
+    ASSERT_ARE_NOT_EQUAL(int, 0, res);
+    ASSERT_IS_NULL(cont_token);
+    ASSERT_IS_NULL(query_resp);
+
+    //cleanup
+}
+
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_077: [ If prov_client, query_spec, cont_token_ptr or query_resp_ptr are NULL, prov_sc_query_individual_enrollment shall fail and return a non-zero value ]*/
+TEST_FUNCTION(prov_sc_query_individual_enrollment_NULL_query_spec)
+{
+    //arrange
+    PROVISIONING_SERVICE_CLIENT_HANDLE sc = prov_sc_create_from_connection_string(TEST_CONNECTION_STRING);
+
+    char* cont_token = NULL;
+    PROVISIONING_QUERY_RESPONSE* query_resp = NULL;
+    umock_c_reset_all_calls();
+
+    //act
+    int res = prov_sc_query_individual_enrollment(sc, NULL, &cont_token, &query_resp);
+
+    //assert
+    ASSERT_ARE_EQUAL(char_ptr, umock_c_get_expected_calls(), umock_c_get_actual_calls());
+    ASSERT_ARE_NOT_EQUAL(int, 0, res);
+    ASSERT_IS_NULL(cont_token);
+    ASSERT_IS_NULL(query_resp);
+
+    //cleanup
+    prov_sc_destroy(sc);
+}
+
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_077: [ If prov_client, query_spec, cont_token_ptr or query_resp_ptr are NULL, prov_sc_query_individual_enrollment shall fail and return a non-zero value ]*/
+TEST_FUNCTION(prov_sc_query_individual_enrollment_NULL_cont_token_ptr)
+{
+    //arrange
+    PROVISIONING_SERVICE_CLIENT_HANDLE sc = prov_sc_create_from_connection_string(TEST_CONNECTION_STRING);
+    PROVISIONING_QUERY_SPECIFICATION qs = { 0 };
+    qs.page_size = NO_MAX_PAGE_SIZE;
+    qs.query_string = TEST_QUERY_STRING;
+    qs.version = PROVISIONING_QUERY_SPECIFICATION_VERSION_1;
+
+    PROVISIONING_QUERY_RESPONSE* query_resp = NULL;
+    umock_c_reset_all_calls();
+
+    //act
+    int res = prov_sc_query_individual_enrollment(sc, &qs, NULL, &query_resp);
+
+    //assert
+    ASSERT_ARE_EQUAL(char_ptr, umock_c_get_expected_calls(), umock_c_get_actual_calls());
+    ASSERT_ARE_NOT_EQUAL(int, 0, res);
+    ASSERT_IS_NULL(query_resp);
+
+    //cleanup
+    prov_sc_destroy(sc);
+}
+
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_077: [ If prov_client, query_spec, cont_token_ptr or query_resp_ptr are NULL, prov_sc_query_individual_enrollment shall fail and return a non-zero value ]*/
+TEST_FUNCTION(prov_sc_query_individual_enrollment_NULL_query_resp_ptr)
+{
+    //arrange
+    PROVISIONING_SERVICE_CLIENT_HANDLE sc = prov_sc_create_from_connection_string(TEST_CONNECTION_STRING);
+    PROVISIONING_QUERY_SPECIFICATION qs = { 0 };
+    qs.page_size = NO_MAX_PAGE_SIZE;
+    qs.query_string = TEST_QUERY_STRING;
+    qs.version = PROVISIONING_QUERY_SPECIFICATION_VERSION_1;
+
+    char* cont_token = NULL;
+    umock_c_reset_all_calls();
+
+    //act
+    int res = prov_sc_query_individual_enrollment(sc, &qs, &cont_token, NULL);
+
+    //assert
+    ASSERT_ARE_EQUAL(char_ptr, umock_c_get_expected_calls(), umock_c_get_actual_calls());
+    ASSERT_ARE_NOT_EQUAL(int, 0, res);
+    ASSERT_IS_NULL(cont_token);
+
+    //cleanup
+    prov_sc_destroy(sc);
+}
+
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_078: [ If query_spec has invalid values, prov_sc_query_individual_enrollment shall fail and return a non-zero value ]*/
+TEST_FUNCTION(prov_sc_query_individual_enrollment_invalid_version)
+{
+    //arrange
+    PROVISIONING_SERVICE_CLIENT_HANDLE sc = prov_sc_create_from_connection_string(TEST_CONNECTION_STRING);
+    PROVISIONING_QUERY_SPECIFICATION qs = { 0 };
+    qs.page_size = NO_MAX_PAGE_SIZE;
+    qs.query_string = TEST_QUERY_STRING;
+    qs.version = 47474;
+
+    char* cont_token = NULL;
+    PROVISIONING_QUERY_RESPONSE* query_resp = NULL;
+    umock_c_reset_all_calls();
+
+    //act
+    int res = prov_sc_query_individual_enrollment(sc, &qs, &cont_token, &query_resp);
+
+    //assert
+    ASSERT_ARE_EQUAL(char_ptr, umock_c_get_expected_calls(), umock_c_get_actual_calls());
+    ASSERT_ARE_NOT_EQUAL(int, 0, res);
+    ASSERT_IS_NULL(cont_token);
+    ASSERT_IS_NULL(query_resp);
+
+    //cleanup
+    prov_sc_destroy(sc);
+}
+
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_079: [ A 'POST' REST call shall be issued to run the query operation on the Provisioning Service ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_081: [ The data from the query response shall populate query_resp_ptr ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_083: [ A continuation token (if any) shall populate cont_token_ptr ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_084: [ Upon success, prov_sc_query_individual_enrollment shall return 0 ]*/
+TEST_FUNCTION(prov_sc_query_individual_enrollment_success_full_results)
+{
+    //arrange
+    PROVISIONING_SERVICE_CLIENT_HANDLE sc = prov_sc_create_from_connection_string(TEST_CONNECTION_STRING);
+    PROVISIONING_QUERY_SPECIFICATION qs = { 0 };
+    qs.page_size = NO_MAX_PAGE_SIZE;
+    qs.query_string = TEST_QUERY_STRING;
+    qs.version = PROVISIONING_QUERY_SPECIFICATION_VERSION_1;
+
+    char* cont_token = NULL;
+    PROVISIONING_QUERY_RESPONSE* query_resp = NULL;
+    umock_c_reset_all_calls();
+
+    STRICT_EXPECTED_CALL(querySpecification_serializeToJson(&qs));
+    expected_calls_construct_registration_path(false);
+    expected_calls_construct_http_headers(NO_ETAG, HTTP_CLIENT_REQUEST_POST);
+    expected_calls_add_query_headers(false, false);
+    STRICT_EXPECTED_CALL(STRING_c_str(IGNORED_PTR_ARG)); //cannot fail
+    expected_calls_rest_call(HTTP_CLIENT_REQUEST_POST, RESPONSE);
+    //response headers
+    STRICT_EXPECTED_CALL(HTTPHeaders_FindHeaderValue(IGNORED_PTR_ARG, IGNORED_PTR_ARG)).SetReturn(NULL); //cannot fail
+    STRICT_EXPECTED_CALL(HTTPHeaders_FindHeaderValue(IGNORED_PTR_ARG, IGNORED_PTR_ARG)).SetReturn(QUERY_RESPONSE_HEADER_ITEM_TYPE_VALUE_INDIVIDUAL_ENROLLMENT);
+    //end response headers
+    STRICT_EXPECTED_CALL(queryType_stringToEnum(QUERY_RESPONSE_HEADER_ITEM_TYPE_VALUE_INDIVIDUAL_ENROLLMENT)); //cannot fail
+    STRICT_EXPECTED_CALL(queryResponse_deserializeFromJson(IGNORED_PTR_ARG, QUERY_TYPE_INDIVIDUAL_ENROLLMENT));
+    STRICT_EXPECTED_CALL(gballoc_free(IGNORED_PTR_ARG)); //cannot fail
+    STRICT_EXPECTED_CALL(HTTPHeaders_Free(IGNORED_PTR_ARG)); //cannot fail
+    STRICT_EXPECTED_CALL(STRING_delete(IGNORED_PTR_ARG)); //cannot fail
+    STRICT_EXPECTED_CALL(gballoc_free(IGNORED_PTR_ARG)); //cannot fail
+
+    //act
+    int res = prov_sc_query_individual_enrollment(sc, &qs, &cont_token, &query_resp);
+
+    //assert
+    ASSERT_ARE_EQUAL(char_ptr, umock_c_get_expected_calls(), umock_c_get_actual_calls());
+    ASSERT_ARE_EQUAL(int, 0, res);
+    ASSERT_IS_NULL(cont_token);
+    ASSERT_IS_NOT_NULL(query_resp);
+
+    //cleanup
+    prov_sc_destroy(sc);
+    queryResponse_free(query_resp);
+}
+
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_079: [ A 'POST' REST call shall be issued to run the query operation on the Provisioning Service ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_081: [ The data from the query response shall populate query_resp_ptr ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_083: [ A continuation token (if any) shall populate cont_token_ptr ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_084: [ Upon success, prov_sc_query_individual_enrollment shall return 0 ]*/
+TEST_FUNCTION(prov_sc_query_individual_enrollment_success_paging_no_given_token_w_token_return)
+{
+    //arrange
+    PROVISIONING_SERVICE_CLIENT_HANDLE sc = prov_sc_create_from_connection_string(TEST_CONNECTION_STRING);
+    PROVISIONING_QUERY_SPECIFICATION qs = { 0 };
+    qs.page_size = 5;
+    qs.query_string = TEST_QUERY_STRING;
+    qs.version = PROVISIONING_QUERY_SPECIFICATION_VERSION_1;
+
+    char* cont_token = NULL;
+    PROVISIONING_QUERY_RESPONSE* query_resp = NULL;
+    umock_c_reset_all_calls();
+
+    STRICT_EXPECTED_CALL(querySpecification_serializeToJson(&qs));
+    expected_calls_construct_registration_path(false);
+    expected_calls_construct_http_headers(NO_ETAG, HTTP_CLIENT_REQUEST_POST);
+    expected_calls_add_query_headers(true, false);
+    STRICT_EXPECTED_CALL(STRING_c_str(IGNORED_PTR_ARG)); //cannot fail
+    expected_calls_rest_call(HTTP_CLIENT_REQUEST_POST, RESPONSE);
+    //response headers
+    STRICT_EXPECTED_CALL(HTTPHeaders_FindHeaderValue(IGNORED_PTR_ARG, IGNORED_PTR_ARG)).SetReturn(TEST_CONT_TOKEN); //cannot fail
+    STRICT_EXPECTED_CALL(HTTPHeaders_FindHeaderValue(IGNORED_PTR_ARG, IGNORED_PTR_ARG)).SetReturn(QUERY_RESPONSE_HEADER_ITEM_TYPE_VALUE_INDIVIDUAL_ENROLLMENT);
+    //end response headers
+    STRICT_EXPECTED_CALL(queryType_stringToEnum(QUERY_RESPONSE_HEADER_ITEM_TYPE_VALUE_INDIVIDUAL_ENROLLMENT)); //cannot fail
+    STRICT_EXPECTED_CALL(queryResponse_deserializeFromJson(IGNORED_PTR_ARG, QUERY_TYPE_INDIVIDUAL_ENROLLMENT));
+    STRICT_EXPECTED_CALL(gballoc_free(IGNORED_PTR_ARG)); //cannot fail
+    STRICT_EXPECTED_CALL(HTTPHeaders_Free(IGNORED_PTR_ARG)); //cannot fail
+    STRICT_EXPECTED_CALL(STRING_delete(IGNORED_PTR_ARG)); //cannot fail
+    STRICT_EXPECTED_CALL(gballoc_free(IGNORED_PTR_ARG)); //cannot fail
+
+    //act
+    int res = prov_sc_query_individual_enrollment(sc, &qs, &cont_token, &query_resp);
+
+    //assert
+    ASSERT_ARE_EQUAL(char_ptr, umock_c_get_expected_calls(), umock_c_get_actual_calls());
+    ASSERT_ARE_EQUAL(int, 0, res);
+    ASSERT_IS_NOT_NULL(cont_token);
+    ASSERT_IS_TRUE(cont_token == TEST_CONT_TOKEN);
+    ASSERT_IS_NOT_NULL(query_resp);
+
+    //cleanup
+    prov_sc_destroy(sc);
+    queryResponse_free(query_resp);
+}
+
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_079: [ A 'POST' REST call shall be issued to run the query operation on the Provisioning Service ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_081: [ The data from the query response shall populate query_resp_ptr ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_083: [ A continuation token (if any) shall populate cont_token_ptr ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_084: [ Upon success, prov_sc_query_individual_enrollment shall return 0 ]*/
+TEST_FUNCTION(prov_sc_query_individual_enrollment_success_paging_given_token_no_token_return)
+{
+    //arrange
+    PROVISIONING_SERVICE_CLIENT_HANDLE sc = prov_sc_create_from_connection_string(TEST_CONNECTION_STRING);
+    PROVISIONING_QUERY_SPECIFICATION qs = { 0 };
+    qs.page_size = 5;
+    qs.query_string = TEST_QUERY_STRING;
+    qs.version = PROVISIONING_QUERY_SPECIFICATION_VERSION_1;
+
+    char* cont_token = (char *)TEST_CONT_TOKEN;
+    PROVISIONING_QUERY_RESPONSE* query_resp = NULL;
+    umock_c_reset_all_calls();
+
+    STRICT_EXPECTED_CALL(querySpecification_serializeToJson(&qs));
+    expected_calls_construct_registration_path(false);
+    expected_calls_construct_http_headers(NO_ETAG, HTTP_CLIENT_REQUEST_POST);
+    expected_calls_add_query_headers(true, true);
+    STRICT_EXPECTED_CALL(STRING_c_str(IGNORED_PTR_ARG)); //cannot fail
+    expected_calls_rest_call(HTTP_CLIENT_REQUEST_POST, RESPONSE);
+    //response headers
+    STRICT_EXPECTED_CALL(HTTPHeaders_FindHeaderValue(IGNORED_PTR_ARG, IGNORED_PTR_ARG)).SetReturn(NULL); //cannot fail
+    STRICT_EXPECTED_CALL(HTTPHeaders_FindHeaderValue(IGNORED_PTR_ARG, IGNORED_PTR_ARG)).SetReturn(QUERY_RESPONSE_HEADER_ITEM_TYPE_VALUE_INDIVIDUAL_ENROLLMENT);
+    //end response headers
+    STRICT_EXPECTED_CALL(queryType_stringToEnum(QUERY_RESPONSE_HEADER_ITEM_TYPE_VALUE_INDIVIDUAL_ENROLLMENT)); //cannot fail
+    STRICT_EXPECTED_CALL(queryResponse_deserializeFromJson(IGNORED_PTR_ARG, QUERY_TYPE_INDIVIDUAL_ENROLLMENT));
+    STRICT_EXPECTED_CALL(gballoc_free(IGNORED_PTR_ARG)); //cannot fail
+    STRICT_EXPECTED_CALL(HTTPHeaders_Free(IGNORED_PTR_ARG)); //cannot fail
+    STRICT_EXPECTED_CALL(STRING_delete(IGNORED_PTR_ARG)); //cannot fail
+    STRICT_EXPECTED_CALL(gballoc_free(IGNORED_PTR_ARG)); //cannot fail
+
+    //act
+    int res = prov_sc_query_individual_enrollment(sc, &qs, &cont_token, &query_resp);
+
+    //assert
+    ASSERT_ARE_EQUAL(char_ptr, umock_c_get_expected_calls(), umock_c_get_actual_calls());
+    ASSERT_ARE_EQUAL(int, 0, res);
+    ASSERT_IS_NULL(cont_token);
+    ASSERT_IS_NOT_NULL(query_resp);
+
+    //cleanup
+    prov_sc_destroy(sc);
+    queryResponse_free(query_resp);
+}
+
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_079: [ A 'POST' REST call shall be issued to run the query operation on the Provisioning Service ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_081: [ The data from the query response shall populate query_resp_ptr ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_083: [ A continuation token (if any) shall populate cont_token_ptr ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_084: [ Upon success, prov_sc_query_individual_enrollment shall return 0 ]*/
+TEST_FUNCTION(prov_sc_query_individual_enrollment_success_paging_given_token_w_token_return)
+{
+    //arrange
+    PROVISIONING_SERVICE_CLIENT_HANDLE sc = prov_sc_create_from_connection_string(TEST_CONNECTION_STRING);
+    PROVISIONING_QUERY_SPECIFICATION qs = { 0 };
+    qs.page_size = 5;
+    qs.query_string = TEST_QUERY_STRING;
+    qs.version = PROVISIONING_QUERY_SPECIFICATION_VERSION_1;
+
+    char* cont_token = (char *)TEST_CONT_TOKEN;
+    PROVISIONING_QUERY_RESPONSE* query_resp = NULL;
+    umock_c_reset_all_calls();
+
+    STRICT_EXPECTED_CALL(querySpecification_serializeToJson(&qs));
+    expected_calls_construct_registration_path(false);
+    expected_calls_construct_http_headers(NO_ETAG, HTTP_CLIENT_REQUEST_POST);
+    expected_calls_add_query_headers(true, true);
+    STRICT_EXPECTED_CALL(STRING_c_str(IGNORED_PTR_ARG)); //cannot fail
+    expected_calls_rest_call(HTTP_CLIENT_REQUEST_POST, RESPONSE);
+    //response headers
+    STRICT_EXPECTED_CALL(HTTPHeaders_FindHeaderValue(IGNORED_PTR_ARG, IGNORED_PTR_ARG)).SetReturn(TEST_CONT_TOKEN2); //cannot fail
+    STRICT_EXPECTED_CALL(HTTPHeaders_FindHeaderValue(IGNORED_PTR_ARG, IGNORED_PTR_ARG)).SetReturn(QUERY_RESPONSE_HEADER_ITEM_TYPE_VALUE_INDIVIDUAL_ENROLLMENT);
+    //end response headers
+    STRICT_EXPECTED_CALL(queryType_stringToEnum(QUERY_RESPONSE_HEADER_ITEM_TYPE_VALUE_INDIVIDUAL_ENROLLMENT)); //cannot fail
+    STRICT_EXPECTED_CALL(queryResponse_deserializeFromJson(IGNORED_PTR_ARG, QUERY_TYPE_INDIVIDUAL_ENROLLMENT));
+    STRICT_EXPECTED_CALL(gballoc_free(IGNORED_PTR_ARG)); //cannot fail
+    STRICT_EXPECTED_CALL(HTTPHeaders_Free(IGNORED_PTR_ARG)); //cannot fail
+    STRICT_EXPECTED_CALL(STRING_delete(IGNORED_PTR_ARG)); //cannot fail
+    STRICT_EXPECTED_CALL(gballoc_free(IGNORED_PTR_ARG)); //cannot fail
+
+    //act
+    int res = prov_sc_query_individual_enrollment(sc, &qs, &cont_token, &query_resp);
+
+    //assert
+    ASSERT_ARE_EQUAL(char_ptr, umock_c_get_expected_calls(), umock_c_get_actual_calls());
+    ASSERT_ARE_EQUAL(int, 0, res);
+    ASSERT_IS_TRUE(cont_token == TEST_CONT_TOKEN2);
+    ASSERT_IS_NOT_NULL(query_resp);
+
+    //cleanup
+    prov_sc_destroy(sc);
+    queryResponse_free(query_resp);
+}
+
+/*---Note that this failure test covers all failures from other cases by virtue of making all possible calls---/*
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_080: [ If the 'POST' REST call fails, prov_sc_query_individual_enrollment shall fail and return a non-zero value ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_082: [ If populating query_resp_ptr with the retrieved data fails, prov_sc_query_individual_enrollment shall fail and return a non-zero value ]*/
+TEST_FUNCTION(prov_sc_query_individual_enrollment_success_paging_given_token_w_token_return_ERROR)
+{
+    //arrange
+    int negativeTestsInitResult = umock_c_negative_tests_init();
+    ASSERT_ARE_EQUAL(int, 0, negativeTestsInitResult);
+
+    PROVISIONING_SERVICE_CLIENT_HANDLE sc = prov_sc_create_from_connection_string(TEST_CONNECTION_STRING);
+    PROVISIONING_QUERY_SPECIFICATION qs = { 0 };
+    qs.page_size = 5;
+    qs.query_string = TEST_QUERY_STRING;
+    qs.version = PROVISIONING_QUERY_SPECIFICATION_VERSION_1;
+
+    char* cont_token = (char *)TEST_CONT_TOKEN;
+    PROVISIONING_QUERY_RESPONSE* query_resp = NULL;
+    umock_c_reset_all_calls();
+
+    STRICT_EXPECTED_CALL(querySpecification_serializeToJson(&qs));
+    expected_calls_construct_registration_path(false);
+    expected_calls_construct_http_headers(NO_ETAG, HTTP_CLIENT_REQUEST_POST); //10
+    expected_calls_add_query_headers(true, true); //12
+    STRICT_EXPECTED_CALL(STRING_c_str(IGNORED_PTR_ARG)); //cannot fail
+    expected_calls_rest_call(HTTP_CLIENT_REQUEST_POST, RESPONSE);
+    //response headers
+    STRICT_EXPECTED_CALL(HTTPHeaders_FindHeaderValue(IGNORED_PTR_ARG, IGNORED_PTR_ARG)).SetReturn(TEST_CONT_TOKEN2); //cannot "fail"
+    STRICT_EXPECTED_CALL(HTTPHeaders_FindHeaderValue(IGNORED_PTR_ARG, IGNORED_PTR_ARG)).SetReturn(QUERY_RESPONSE_HEADER_ITEM_TYPE_VALUE_INDIVIDUAL_ENROLLMENT); //cannot "fail"
+    //end response headers
+    STRICT_EXPECTED_CALL(queryType_stringToEnum(QUERY_RESPONSE_HEADER_ITEM_TYPE_VALUE_INDIVIDUAL_ENROLLMENT));
+    STRICT_EXPECTED_CALL(queryResponse_deserializeFromJson(IGNORED_PTR_ARG, QUERY_TYPE_INDIVIDUAL_ENROLLMENT));
+    STRICT_EXPECTED_CALL(gballoc_free(IGNORED_PTR_ARG)); //cannot fail
+    STRICT_EXPECTED_CALL(HTTPHeaders_Free(IGNORED_PTR_ARG)); //cannot fail
+    STRICT_EXPECTED_CALL(STRING_delete(IGNORED_PTR_ARG)); //cannot fail
+    STRICT_EXPECTED_CALL(gballoc_free(IGNORED_PTR_ARG)); //cannot fail
+
+    umock_c_negative_tests_snapshot();
+
+    size_t calls_cannot_fail[] = { 3, 8, 10, 13, 17, 19, 22, 23, 24, 25, 28, 29, 30, 31 };
+    size_t num_cannot_fail = sizeof(calls_cannot_fail) / sizeof(calls_cannot_fail[0]);
+    size_t count = umock_c_negative_tests_call_count();
+    size_t test_num = 0;
+    size_t test_max = count - num_cannot_fail;
+
+    for (size_t index = 0; index < count; index++)
+    {
+        if (should_skip_index(index, calls_cannot_fail, num_cannot_fail) != 0)
+            continue;
+        test_num++;
+
+        char tmp_msg[128];
+        sprintf(tmp_msg, "prov_sc_query_individual_enrollment_success_paging_given_token_w_token_return_ERROR failure in test %zu/%zu", test_num, test_max);
+
+        umock_c_negative_tests_reset();
+        umock_c_negative_tests_fail_call(index);
+
+        //act
+        int res = prov_sc_query_individual_enrollment(sc, &qs, &cont_token, &query_resp);
+
+        //assert
+        ASSERT_ARE_NOT_EQUAL_WITH_MSG(int, res, 0, tmp_msg);
+
+        g_uhttp_client_dowork_call_count = 0;
+    }
+
+    //cleanup
+    prov_sc_destroy(sc);
+}
+
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_085: [ If prov_client, query_spec, cont_token_ptr or query_resp_ptr are NULL, prov_sc_query_enrollment_group shall fail and return a non-zero value ]*/
+TEST_FUNCTION(prov_sc_query_enrollment_group_NULL_prov_client)
+{
+    //arrange
+    PROVISIONING_QUERY_SPECIFICATION qs = { 0 };
+    qs.page_size = NO_MAX_PAGE_SIZE;
+    qs.query_string = TEST_QUERY_STRING;
+    qs.version = PROVISIONING_QUERY_SPECIFICATION_VERSION_1;
+
+    char* cont_token = NULL;
+    PROVISIONING_QUERY_RESPONSE* query_resp = NULL;
+    umock_c_reset_all_calls();
+
+    //act
+    int res = prov_sc_query_enrollment_group(NULL, &qs, &cont_token, &query_resp);
+
+    //assert
+    ASSERT_ARE_EQUAL(char_ptr, umock_c_get_expected_calls(), umock_c_get_actual_calls());
+    ASSERT_ARE_NOT_EQUAL(int, 0, res);
+    ASSERT_IS_NULL(cont_token);
+    ASSERT_IS_NULL(query_resp);
+
+    //cleanup
+}
+
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_085: [ If prov_client, query_spec, cont_token_ptr or query_resp_ptr are NULL, prov_sc_query_enrollment_group shall fail and return a non-zero value ]*/
+TEST_FUNCTION(prov_sc_query_enrollment_group_NULL_query_spec)
+{
+    //arrange
+    PROVISIONING_SERVICE_CLIENT_HANDLE sc = prov_sc_create_from_connection_string(TEST_CONNECTION_STRING);
+
+    char* cont_token = NULL;
+    PROVISIONING_QUERY_RESPONSE* query_resp = NULL;
+    umock_c_reset_all_calls();
+
+    //act
+    int res = prov_sc_query_enrollment_group(sc, NULL, &cont_token, &query_resp);
+
+    //assert
+    ASSERT_ARE_EQUAL(char_ptr, umock_c_get_expected_calls(), umock_c_get_actual_calls());
+    ASSERT_ARE_NOT_EQUAL(int, 0, res);
+    ASSERT_IS_NULL(cont_token);
+    ASSERT_IS_NULL(query_resp);
+
+    //cleanup
+    prov_sc_destroy(sc);
+}
+
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_085: [ If prov_client, query_spec, cont_token_ptr or query_resp_ptr are NULL, prov_sc_query_enrollment_group shall fail and return a non-zero value ]*/
+TEST_FUNCTION(prov_sc_query_enrollment_group_NULL_cont_token_ptr)
+{
+    //arrange
+    PROVISIONING_SERVICE_CLIENT_HANDLE sc = prov_sc_create_from_connection_string(TEST_CONNECTION_STRING);
+    PROVISIONING_QUERY_SPECIFICATION qs = { 0 };
+    qs.page_size = NO_MAX_PAGE_SIZE;
+    qs.query_string = TEST_QUERY_STRING;
+    qs.version = PROVISIONING_QUERY_SPECIFICATION_VERSION_1;
+
+    PROVISIONING_QUERY_RESPONSE* query_resp = NULL;
+    umock_c_reset_all_calls();
+
+    //act
+    int res = prov_sc_query_enrollment_group(sc, &qs, NULL, &query_resp);
+
+    //assert
+    ASSERT_ARE_EQUAL(char_ptr, umock_c_get_expected_calls(), umock_c_get_actual_calls());
+    ASSERT_ARE_NOT_EQUAL(int, 0, res);
+    ASSERT_IS_NULL(query_resp);
+
+    //cleanup
+    prov_sc_destroy(sc);
+}
+
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_085: [ If prov_client, query_spec, cont_token_ptr or query_resp_ptr are NULL, prov_sc_query_enrollment_group shall fail and return a non-zero value ]*/
+TEST_FUNCTION(prov_sc_query_enrollment_group_NULL_query_resp_ptr)
+{
+    //arrange
+    PROVISIONING_SERVICE_CLIENT_HANDLE sc = prov_sc_create_from_connection_string(TEST_CONNECTION_STRING);
+    PROVISIONING_QUERY_SPECIFICATION qs = { 0 };
+    qs.page_size = NO_MAX_PAGE_SIZE;
+    qs.query_string = TEST_QUERY_STRING;
+    qs.version = PROVISIONING_QUERY_SPECIFICATION_VERSION_1;
+
+    char* cont_token = NULL;
+    umock_c_reset_all_calls();
+
+    //act
+    int res = prov_sc_query_enrollment_group(sc, &qs, &cont_token, NULL);
+
+    //assert
+    ASSERT_ARE_EQUAL(char_ptr, umock_c_get_expected_calls(), umock_c_get_actual_calls());
+    ASSERT_ARE_NOT_EQUAL(int, 0, res);
+    ASSERT_IS_NULL(cont_token);
+
+    //cleanup
+    prov_sc_destroy(sc);
+}
+
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_086: [ If query_spec has invalid values, prov_sc_query_enrollment_group shall fail and return a non-zero value ]*/
+TEST_FUNCTION(prov_sc_query_enrollment_group_invalid_version)
+{
+    //arrange
+    PROVISIONING_SERVICE_CLIENT_HANDLE sc = prov_sc_create_from_connection_string(TEST_CONNECTION_STRING);
+    PROVISIONING_QUERY_SPECIFICATION qs = { 0 };
+    qs.page_size = NO_MAX_PAGE_SIZE;
+    qs.query_string = TEST_QUERY_STRING;
+    qs.version = 47474;
+
+    char* cont_token = NULL;
+    PROVISIONING_QUERY_RESPONSE* query_resp = NULL;
+    umock_c_reset_all_calls();
+
+    //act
+    int res = prov_sc_query_enrollment_group(sc, &qs, &cont_token, &query_resp);
+
+    //assert
+    ASSERT_ARE_EQUAL(char_ptr, umock_c_get_expected_calls(), umock_c_get_actual_calls());
+    ASSERT_ARE_NOT_EQUAL(int, 0, res);
+    ASSERT_IS_NULL(cont_token);
+    ASSERT_IS_NULL(query_resp);
+
+    //cleanup
+    prov_sc_destroy(sc);
+}
+
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_087: [ A 'POST' REST call shall be issued to run the query operation on the Provisioning Service ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_089: [ The data from the query response shall populate query_resp_ptr ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_091: [ A continuation token (if any) shall populate cont_token_ptr ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_092: [ Upon success, prov_sc_query_enrollment_group shall return 0 ]*/
+TEST_FUNCTION(prov_sc_query_enrollment_group_success_full_results)
+{
+    //arrange
+    PROVISIONING_SERVICE_CLIENT_HANDLE sc = prov_sc_create_from_connection_string(TEST_CONNECTION_STRING);
+    PROVISIONING_QUERY_SPECIFICATION qs = { 0 };
+    qs.page_size = NO_MAX_PAGE_SIZE;
+    qs.query_string = TEST_QUERY_STRING;
+    qs.version = PROVISIONING_QUERY_SPECIFICATION_VERSION_1;
+
+    char* cont_token = NULL;
+    PROVISIONING_QUERY_RESPONSE* query_resp = NULL;
+    umock_c_reset_all_calls();
+
+    STRICT_EXPECTED_CALL(querySpecification_serializeToJson(&qs));
+    expected_calls_construct_registration_path(false);
+    expected_calls_construct_http_headers(NO_ETAG, HTTP_CLIENT_REQUEST_POST);
+    expected_calls_add_query_headers(false, false);
+    STRICT_EXPECTED_CALL(STRING_c_str(IGNORED_PTR_ARG)); //cannot fail
+    expected_calls_rest_call(HTTP_CLIENT_REQUEST_POST, RESPONSE);
+    //response headers
+    STRICT_EXPECTED_CALL(HTTPHeaders_FindHeaderValue(IGNORED_PTR_ARG, IGNORED_PTR_ARG)).SetReturn(NULL); //cannot fail
+    STRICT_EXPECTED_CALL(HTTPHeaders_FindHeaderValue(IGNORED_PTR_ARG, IGNORED_PTR_ARG)).SetReturn(QUERY_RESPONSE_HEADER_ITEM_TYPE_VALUE_ENROLLMENT_GROUP);
+    //end response headers
+    STRICT_EXPECTED_CALL(queryType_stringToEnum(QUERY_RESPONSE_HEADER_ITEM_TYPE_VALUE_ENROLLMENT_GROUP)); //cannot fail
+    STRICT_EXPECTED_CALL(queryResponse_deserializeFromJson(IGNORED_PTR_ARG, QUERY_TYPE_ENROLLMENT_GROUP));
+    STRICT_EXPECTED_CALL(gballoc_free(IGNORED_PTR_ARG)); //cannot fail
+    STRICT_EXPECTED_CALL(HTTPHeaders_Free(IGNORED_PTR_ARG)); //cannot fail
+    STRICT_EXPECTED_CALL(STRING_delete(IGNORED_PTR_ARG)); //cannot fail
+    STRICT_EXPECTED_CALL(gballoc_free(IGNORED_PTR_ARG)); //cannot fail
+
+    //act
+    int res = prov_sc_query_enrollment_group(sc, &qs, &cont_token, &query_resp);
+
+    //assert
+    ASSERT_ARE_EQUAL(char_ptr, umock_c_get_expected_calls(), umock_c_get_actual_calls());
+    ASSERT_ARE_EQUAL(int, 0, res);
+    ASSERT_IS_NULL(cont_token);
+    ASSERT_IS_NOT_NULL(query_resp);
+
+    //cleanup
+    prov_sc_destroy(sc);
+    queryResponse_free(query_resp);
+}
+
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_087: [ A 'POST' REST call shall be issued to run the query operation on the Provisioning Service ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_089: [ The data from the query response shall populate query_resp_ptr ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_091: [ A continuation token (if any) shall populate cont_token_ptr ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_092: [ Upon success, prov_sc_query_enrollment_group shall return 0 ]*/
+TEST_FUNCTION(prov_sc_query_enrollment_group_success_paging_no_given_token_w_token_return)
+{
+    //arrange
+    PROVISIONING_SERVICE_CLIENT_HANDLE sc = prov_sc_create_from_connection_string(TEST_CONNECTION_STRING);
+    PROVISIONING_QUERY_SPECIFICATION qs = { 0 };
+    qs.page_size = 5;
+    qs.query_string = TEST_QUERY_STRING;
+    qs.version = PROVISIONING_QUERY_SPECIFICATION_VERSION_1;
+
+    char* cont_token = NULL;
+    PROVISIONING_QUERY_RESPONSE* query_resp = NULL;
+    umock_c_reset_all_calls();
+
+    STRICT_EXPECTED_CALL(querySpecification_serializeToJson(&qs));
+    expected_calls_construct_registration_path(false);
+    expected_calls_construct_http_headers(NO_ETAG, HTTP_CLIENT_REQUEST_POST);
+    expected_calls_add_query_headers(true, false);
+    STRICT_EXPECTED_CALL(STRING_c_str(IGNORED_PTR_ARG)); //cannot fail
+    expected_calls_rest_call(HTTP_CLIENT_REQUEST_POST, RESPONSE);
+    //response headers
+    STRICT_EXPECTED_CALL(HTTPHeaders_FindHeaderValue(IGNORED_PTR_ARG, IGNORED_PTR_ARG)).SetReturn(TEST_CONT_TOKEN); //cannot fail
+    STRICT_EXPECTED_CALL(HTTPHeaders_FindHeaderValue(IGNORED_PTR_ARG, IGNORED_PTR_ARG)).SetReturn(QUERY_RESPONSE_HEADER_ITEM_TYPE_VALUE_ENROLLMENT_GROUP);
+    //end response headers
+    STRICT_EXPECTED_CALL(queryType_stringToEnum(QUERY_RESPONSE_HEADER_ITEM_TYPE_VALUE_ENROLLMENT_GROUP)); //cannot fail
+    STRICT_EXPECTED_CALL(queryResponse_deserializeFromJson(IGNORED_PTR_ARG, QUERY_TYPE_ENROLLMENT_GROUP));
+    STRICT_EXPECTED_CALL(gballoc_free(IGNORED_PTR_ARG)); //cannot fail
+    STRICT_EXPECTED_CALL(HTTPHeaders_Free(IGNORED_PTR_ARG)); //cannot fail
+    STRICT_EXPECTED_CALL(STRING_delete(IGNORED_PTR_ARG)); //cannot fail
+    STRICT_EXPECTED_CALL(gballoc_free(IGNORED_PTR_ARG)); //cannot fail
+
+    //act
+    int res = prov_sc_query_enrollment_group(sc, &qs, &cont_token, &query_resp);
+
+    //assert
+    ASSERT_ARE_EQUAL(char_ptr, umock_c_get_expected_calls(), umock_c_get_actual_calls());
+    ASSERT_ARE_EQUAL(int, 0, res);
+    ASSERT_IS_NOT_NULL(cont_token);
+    ASSERT_IS_TRUE(cont_token == TEST_CONT_TOKEN);
+    ASSERT_IS_NOT_NULL(query_resp);
+
+    //cleanup
+    prov_sc_destroy(sc);
+    queryResponse_free(query_resp);
+}
+
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_087: [ A 'POST' REST call shall be issued to run the query operation on the Provisioning Service ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_089: [ The data from the query response shall populate query_resp_ptr ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_091: [ A continuation token (if any) shall populate cont_token_ptr ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_092: [ Upon success, prov_sc_query_enrollment_group shall return 0 ]*/
+TEST_FUNCTION(prov_sc_query_enrollment_group_success_paging_given_token_no_token_return)
+{
+    //arrange
+    PROVISIONING_SERVICE_CLIENT_HANDLE sc = prov_sc_create_from_connection_string(TEST_CONNECTION_STRING);
+    PROVISIONING_QUERY_SPECIFICATION qs = { 0 };
+    qs.page_size = 5;
+    qs.query_string = TEST_QUERY_STRING;
+    qs.version = PROVISIONING_QUERY_SPECIFICATION_VERSION_1;
+
+    char* cont_token = (char *)TEST_CONT_TOKEN;
+    PROVISIONING_QUERY_RESPONSE* query_resp = NULL;
+    umock_c_reset_all_calls();
+
+    STRICT_EXPECTED_CALL(querySpecification_serializeToJson(&qs));
+    expected_calls_construct_registration_path(false);
+    expected_calls_construct_http_headers(NO_ETAG, HTTP_CLIENT_REQUEST_POST);
+    expected_calls_add_query_headers(true, true);
+    STRICT_EXPECTED_CALL(STRING_c_str(IGNORED_PTR_ARG)); //cannot fail
+    expected_calls_rest_call(HTTP_CLIENT_REQUEST_POST, RESPONSE);
+    //response headers
+    STRICT_EXPECTED_CALL(HTTPHeaders_FindHeaderValue(IGNORED_PTR_ARG, IGNORED_PTR_ARG)).SetReturn(NULL); //cannot fail
+    STRICT_EXPECTED_CALL(HTTPHeaders_FindHeaderValue(IGNORED_PTR_ARG, IGNORED_PTR_ARG)).SetReturn(QUERY_RESPONSE_HEADER_ITEM_TYPE_VALUE_ENROLLMENT_GROUP);
+    //end response headers
+    STRICT_EXPECTED_CALL(queryType_stringToEnum(QUERY_RESPONSE_HEADER_ITEM_TYPE_VALUE_ENROLLMENT_GROUP)); //cannot fail
+    STRICT_EXPECTED_CALL(queryResponse_deserializeFromJson(IGNORED_PTR_ARG, QUERY_TYPE_ENROLLMENT_GROUP));
+    STRICT_EXPECTED_CALL(gballoc_free(IGNORED_PTR_ARG)); //cannot fail
+    STRICT_EXPECTED_CALL(HTTPHeaders_Free(IGNORED_PTR_ARG)); //cannot fail
+    STRICT_EXPECTED_CALL(STRING_delete(IGNORED_PTR_ARG)); //cannot fail
+    STRICT_EXPECTED_CALL(gballoc_free(IGNORED_PTR_ARG)); //cannot fail
+
+    //act
+    int res = prov_sc_query_enrollment_group(sc, &qs, &cont_token, &query_resp);
+
+    //assert
+    ASSERT_ARE_EQUAL(char_ptr, umock_c_get_expected_calls(), umock_c_get_actual_calls());
+    ASSERT_ARE_EQUAL(int, 0, res);
+    ASSERT_IS_NULL(cont_token);
+    ASSERT_IS_NOT_NULL(query_resp);
+
+    //cleanup
+    prov_sc_destroy(sc);
+    queryResponse_free(query_resp);
+}
+
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_087: [ A 'POST' REST call shall be issued to run the query operation on the Provisioning Service ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_089: [ The data from the query response shall populate query_resp_ptr ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_091: [ A continuation token (if any) shall populate cont_token_ptr ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_092: [ Upon success, prov_sc_query_enrollment_group shall return 0 ]*/
+TEST_FUNCTION(prov_sc_query_enrollment_group_success_paging_given_token_w_token_return)
+{
+    //arrange
+    PROVISIONING_SERVICE_CLIENT_HANDLE sc = prov_sc_create_from_connection_string(TEST_CONNECTION_STRING);
+    PROVISIONING_QUERY_SPECIFICATION qs = { 0 };
+    qs.page_size = 5;
+    qs.query_string = TEST_QUERY_STRING;
+    qs.version = PROVISIONING_QUERY_SPECIFICATION_VERSION_1;
+
+    char* cont_token = (char *)TEST_CONT_TOKEN;
+    PROVISIONING_QUERY_RESPONSE* query_resp = NULL;
+    umock_c_reset_all_calls();
+
+    STRICT_EXPECTED_CALL(querySpecification_serializeToJson(&qs));
+    expected_calls_construct_registration_path(false);
+    expected_calls_construct_http_headers(NO_ETAG, HTTP_CLIENT_REQUEST_POST);
+    expected_calls_add_query_headers(true, true);
+    STRICT_EXPECTED_CALL(STRING_c_str(IGNORED_PTR_ARG)); //cannot fail
+    expected_calls_rest_call(HTTP_CLIENT_REQUEST_POST, RESPONSE);
+    //response headers
+    STRICT_EXPECTED_CALL(HTTPHeaders_FindHeaderValue(IGNORED_PTR_ARG, IGNORED_PTR_ARG)).SetReturn(TEST_CONT_TOKEN2); //cannot fail
+    STRICT_EXPECTED_CALL(HTTPHeaders_FindHeaderValue(IGNORED_PTR_ARG, IGNORED_PTR_ARG)).SetReturn(QUERY_RESPONSE_HEADER_ITEM_TYPE_VALUE_ENROLLMENT_GROUP);
+    //end response headers
+    STRICT_EXPECTED_CALL(queryType_stringToEnum(QUERY_RESPONSE_HEADER_ITEM_TYPE_VALUE_ENROLLMENT_GROUP)); //cannot fail
+    STRICT_EXPECTED_CALL(queryResponse_deserializeFromJson(IGNORED_PTR_ARG, QUERY_TYPE_ENROLLMENT_GROUP));
+    STRICT_EXPECTED_CALL(gballoc_free(IGNORED_PTR_ARG)); //cannot fail
+    STRICT_EXPECTED_CALL(HTTPHeaders_Free(IGNORED_PTR_ARG)); //cannot fail
+    STRICT_EXPECTED_CALL(STRING_delete(IGNORED_PTR_ARG)); //cannot fail
+    STRICT_EXPECTED_CALL(gballoc_free(IGNORED_PTR_ARG)); //cannot fail
+
+    //act
+    int res = prov_sc_query_enrollment_group(sc, &qs, &cont_token, &query_resp);
+
+    //assert
+    ASSERT_ARE_EQUAL(char_ptr, umock_c_get_expected_calls(), umock_c_get_actual_calls());
+    ASSERT_ARE_EQUAL(int, 0, res);
+    ASSERT_IS_TRUE(cont_token == TEST_CONT_TOKEN2);
+    ASSERT_IS_NOT_NULL(query_resp);
+
+    //cleanup
+    prov_sc_destroy(sc);
+    queryResponse_free(query_resp);
+}
+
+/*---Note that this failure test covers all failures from other cases by virtue of making all possible calls---*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_088: [ If the 'POST' REST call fails, prov_sc_query_enrollment_group shall fail and return a non-zero value ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_090: [ If populating query_resp_ptr with the retrieved data fails, prov_sc_query_enrollment_group shall fail and return a non-zero value ]*/
+TEST_FUNCTION(prov_sc_query_enrollment_group_success_paging_given_token_w_token_return_ERROR)
+{
+    //arrange
+    int negativeTestsInitResult = umock_c_negative_tests_init();
+    ASSERT_ARE_EQUAL(int, 0, negativeTestsInitResult);
+
+    PROVISIONING_SERVICE_CLIENT_HANDLE sc = prov_sc_create_from_connection_string(TEST_CONNECTION_STRING);
+    PROVISIONING_QUERY_SPECIFICATION qs = { 0 };
+    qs.page_size = 5;
+    qs.query_string = TEST_QUERY_STRING;
+    qs.version = PROVISIONING_QUERY_SPECIFICATION_VERSION_1;
+
+    char* cont_token = (char *)TEST_CONT_TOKEN;
+    PROVISIONING_QUERY_RESPONSE* query_resp = NULL;
+    umock_c_reset_all_calls();
+
+    STRICT_EXPECTED_CALL(querySpecification_serializeToJson(&qs));
+    expected_calls_construct_registration_path(false);
+    expected_calls_construct_http_headers(NO_ETAG, HTTP_CLIENT_REQUEST_POST); //10
+    expected_calls_add_query_headers(true, true); //12
+    STRICT_EXPECTED_CALL(STRING_c_str(IGNORED_PTR_ARG)); //cannot fail
+    expected_calls_rest_call(HTTP_CLIENT_REQUEST_POST, RESPONSE);
+    //response headers
+    STRICT_EXPECTED_CALL(HTTPHeaders_FindHeaderValue(IGNORED_PTR_ARG, IGNORED_PTR_ARG)).SetReturn(TEST_CONT_TOKEN2); //cannot "fail"
+    STRICT_EXPECTED_CALL(HTTPHeaders_FindHeaderValue(IGNORED_PTR_ARG, IGNORED_PTR_ARG)).SetReturn(QUERY_RESPONSE_HEADER_ITEM_TYPE_VALUE_ENROLLMENT_GROUP); //cannot "fail"
+    //end response headers
+    STRICT_EXPECTED_CALL(queryType_stringToEnum(QUERY_RESPONSE_HEADER_ITEM_TYPE_VALUE_ENROLLMENT_GROUP));
+    STRICT_EXPECTED_CALL(queryResponse_deserializeFromJson(IGNORED_PTR_ARG, QUERY_TYPE_ENROLLMENT_GROUP));
+    STRICT_EXPECTED_CALL(gballoc_free(IGNORED_PTR_ARG)); //cannot fail
+    STRICT_EXPECTED_CALL(HTTPHeaders_Free(IGNORED_PTR_ARG)); //cannot fail
+    STRICT_EXPECTED_CALL(STRING_delete(IGNORED_PTR_ARG)); //cannot fail
+    STRICT_EXPECTED_CALL(gballoc_free(IGNORED_PTR_ARG)); //cannot fail
+
+    umock_c_negative_tests_snapshot();
+
+    size_t calls_cannot_fail[] = { 3, 8, 10, 13, 17, 19, 22, 23, 24, 25, 28, 29, 30, 31 };
+    size_t num_cannot_fail = sizeof(calls_cannot_fail) / sizeof(calls_cannot_fail[0]);
+    size_t count = umock_c_negative_tests_call_count();
+    size_t test_num = 0;
+    size_t test_max = count - num_cannot_fail;
+
+    for (size_t index = 0; index < count; index++)
+    {
+        if (should_skip_index(index, calls_cannot_fail, num_cannot_fail) != 0)
+            continue;
+        test_num++;
+
+        char tmp_msg[128];
+        sprintf(tmp_msg, "prov_sc_query_enrollment_group_success_paging_given_token_w_token_return_ERROR failure in test %zu/%zu", test_num, test_max);
+
+        umock_c_negative_tests_reset();
+        umock_c_negative_tests_fail_call(index);
+
+        //act
+        int res = prov_sc_query_enrollment_group(sc, &qs, &cont_token, &query_resp);
+
+        //assert
+        ASSERT_ARE_NOT_EQUAL_WITH_MSG(int, res, 0, tmp_msg);
+
+        g_uhttp_client_dowork_call_count = 0;
+    }
+
+    //cleanup
+    prov_sc_destroy(sc);
+}
+
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_093: [ If prov_client, query_spec, cont_token_ptr or query_resp_ptr are NULL, prov_sc_query_device_registration_state shall fail and return a non-zero value ]*/
+TEST_FUNCTION(prov_sc_query_device_registration_state_NULL_prov_client)
+{
+    //arrange
+    PROVISIONING_QUERY_SPECIFICATION qs = { 0 };
+    qs.page_size = NO_MAX_PAGE_SIZE;
+    qs.registration_id = TEST_REGID;
+    qs.version = PROVISIONING_QUERY_SPECIFICATION_VERSION_1;
+
+    char* cont_token = NULL;
+    PROVISIONING_QUERY_RESPONSE* query_resp = NULL;
+    umock_c_reset_all_calls();
+
+    //act
+    int res = prov_sc_query_device_registration_state(NULL, &qs, &cont_token, &query_resp);
+
+    //assert
+    ASSERT_ARE_EQUAL(char_ptr, umock_c_get_expected_calls(), umock_c_get_actual_calls());
+    ASSERT_ARE_NOT_EQUAL(int, 0, res);
+    ASSERT_IS_NULL(cont_token);
+    ASSERT_IS_NULL(query_resp);
+
+    //cleanup
+}
+
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_093: [ If prov_client, query_spec, cont_token_ptr or query_resp_ptr are NULL, prov_sc_query_device_registration_state shall fail and return a non-zero value ]*/
+TEST_FUNCTION(prov_sc_query_device_registration_state_NULL_query_spec)
+{
+    //arrange
+    PROVISIONING_SERVICE_CLIENT_HANDLE sc = prov_sc_create_from_connection_string(TEST_CONNECTION_STRING);
+
+    char* cont_token = NULL;
+    PROVISIONING_QUERY_RESPONSE* query_resp = NULL;
+    umock_c_reset_all_calls();
+
+    //act
+    int res = prov_sc_query_device_registration_state(sc, NULL, &cont_token, &query_resp);
+
+    //assert
+    ASSERT_ARE_EQUAL(char_ptr, umock_c_get_expected_calls(), umock_c_get_actual_calls());
+    ASSERT_ARE_NOT_EQUAL(int, 0, res);
+    ASSERT_IS_NULL(cont_token);
+    ASSERT_IS_NULL(query_resp);
+
+    //cleanup
+    prov_sc_destroy(sc);
+}
+
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_093: [ If prov_client, query_spec, cont_token_ptr or query_resp_ptr are NULL, prov_sc_query_device_registration_state shall fail and return a non-zero value ]*/
+TEST_FUNCTION(prov_sc_query_device_registration_state_NULL_cont_token_ptr)
+{
+    //arrange
+    PROVISIONING_SERVICE_CLIENT_HANDLE sc = prov_sc_create_from_connection_string(TEST_CONNECTION_STRING);
+    PROVISIONING_QUERY_SPECIFICATION qs = { 0 };
+    qs.page_size = NO_MAX_PAGE_SIZE;
+    qs.registration_id = TEST_REGID;
+    qs.version = PROVISIONING_QUERY_SPECIFICATION_VERSION_1;
+
+    PROVISIONING_QUERY_RESPONSE* query_resp = NULL;
+    umock_c_reset_all_calls();
+
+    //act
+    int res = prov_sc_query_device_registration_state(sc, &qs, NULL, &query_resp);
+
+    //assert
+    ASSERT_ARE_EQUAL(char_ptr, umock_c_get_expected_calls(), umock_c_get_actual_calls());
+    ASSERT_ARE_NOT_EQUAL(int, 0, res);
+    ASSERT_IS_NULL(query_resp);
+
+    //cleanup
+    prov_sc_destroy(sc);
+}
+
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_093: [ If prov_client, query_spec, cont_token_ptr or query_resp_ptr are NULL, prov_sc_query_device_registration_state shall fail and return a non-zero value ]*/
+TEST_FUNCTION(prov_sc_query_device_registration_state_NULL_query_resp_ptr)
+{
+    //arrange
+    PROVISIONING_SERVICE_CLIENT_HANDLE sc = prov_sc_create_from_connection_string(TEST_CONNECTION_STRING);
+    PROVISIONING_QUERY_SPECIFICATION qs = { 0 };
+    qs.page_size = NO_MAX_PAGE_SIZE;
+    qs.registration_id = TEST_REGID;
+    qs.version = PROVISIONING_QUERY_SPECIFICATION_VERSION_1;
+
+    char* cont_token = NULL;
+    umock_c_reset_all_calls();
+
+    //act
+    int res = prov_sc_query_device_registration_state(sc, &qs, &cont_token, NULL);
+
+    //assert
+    ASSERT_ARE_EQUAL(char_ptr, umock_c_get_expected_calls(), umock_c_get_actual_calls());
+    ASSERT_ARE_NOT_EQUAL(int, 0, res);
+    ASSERT_IS_NULL(cont_token);
+
+    //cleanup
+    prov_sc_destroy(sc);
+}
+
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_094: [ If query_spec has invalid values, prov_sc_query_device_registration_state shall fail and return a non-zero value ]*/
+TEST_FUNCTION(prov_sc_query_device_registration_state_invalid_version)
+{
+    //arrange
+    PROVISIONING_SERVICE_CLIENT_HANDLE sc = prov_sc_create_from_connection_string(TEST_CONNECTION_STRING);
+    PROVISIONING_QUERY_SPECIFICATION qs = { 0 };
+    qs.page_size = NO_MAX_PAGE_SIZE;
+    qs.registration_id = TEST_REGID;
+    qs.version = 47474;
+
+    char* cont_token = NULL;
+    PROVISIONING_QUERY_RESPONSE* query_resp = NULL;
+    umock_c_reset_all_calls();
+
+    //act
+    int res = prov_sc_query_device_registration_state(sc, &qs, &cont_token, &query_resp);
+
+    //assert
+    ASSERT_ARE_EQUAL(char_ptr, umock_c_get_expected_calls(), umock_c_get_actual_calls());
+    ASSERT_ARE_NOT_EQUAL(int, 0, res);
+    ASSERT_IS_NULL(cont_token);
+    ASSERT_IS_NULL(query_resp);
+
+    //cleanup
+    prov_sc_destroy(sc);
+}
+
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_095: [ A 'POST' REST call shall be issued to run the query operation on the Provisioning Service ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_097: [ The data from the query response shall populate query_resp_ptr ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_099: [ A continuation token (if any) shall populate cont_token_ptr ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_100: [ Upon success, prov_sc_query_device_registration_state shall return 0 ]*/
+TEST_FUNCTION(prov_sc_query_device_registration_state_success_full_results)
+{
+    //arrange
+    PROVISIONING_SERVICE_CLIENT_HANDLE sc = prov_sc_create_from_connection_string(TEST_CONNECTION_STRING);
+    PROVISIONING_QUERY_SPECIFICATION qs = { 0 };
+    qs.page_size = NO_MAX_PAGE_SIZE;
+    qs.registration_id = TEST_REGID;
+    qs.version = PROVISIONING_QUERY_SPECIFICATION_VERSION_1;
+
+    char* cont_token = NULL;
+    PROVISIONING_QUERY_RESPONSE* query_resp = NULL;
+    umock_c_reset_all_calls();
+
+    expected_calls_construct_registration_path(true);
+    expected_calls_construct_http_headers(NO_ETAG, HTTP_CLIENT_REQUEST_POST);
+    expected_calls_add_query_headers(false, false);
+    STRICT_EXPECTED_CALL(STRING_c_str(IGNORED_PTR_ARG)); //cannot fail
+    expected_calls_rest_call(HTTP_CLIENT_REQUEST_POST, RESPONSE);
+    //response headers
+    STRICT_EXPECTED_CALL(HTTPHeaders_FindHeaderValue(IGNORED_PTR_ARG, IGNORED_PTR_ARG)).SetReturn(NULL); //cannot fail
+    STRICT_EXPECTED_CALL(HTTPHeaders_FindHeaderValue(IGNORED_PTR_ARG, IGNORED_PTR_ARG)).SetReturn(QUERY_RESPONSE_HEADER_ITEM_TYPE_VALUE_DEVICE_REGISTRATION_STATE);
+    //end response headers
+    STRICT_EXPECTED_CALL(queryType_stringToEnum(QUERY_RESPONSE_HEADER_ITEM_TYPE_VALUE_DEVICE_REGISTRATION_STATE)); //cannot fail
+    STRICT_EXPECTED_CALL(queryResponse_deserializeFromJson(IGNORED_PTR_ARG, QUERY_TYPE_DEVICE_REGISTRATION_STATE));
+    STRICT_EXPECTED_CALL(gballoc_free(IGNORED_PTR_ARG)); //cannot fail
+    STRICT_EXPECTED_CALL(HTTPHeaders_Free(IGNORED_PTR_ARG)); //cannot fail
+    STRICT_EXPECTED_CALL(STRING_delete(IGNORED_PTR_ARG)); //cannot fail
+    STRICT_EXPECTED_CALL(gballoc_free(IGNORED_PTR_ARG)); //cannot fail
+
+    //act
+    int res = prov_sc_query_device_registration_state(sc, &qs, &cont_token, &query_resp);
+
+    //assert
+    ASSERT_ARE_EQUAL(char_ptr, umock_c_get_expected_calls(), umock_c_get_actual_calls());
+    ASSERT_ARE_EQUAL(int, 0, res);
+    ASSERT_IS_NULL(cont_token);
+    ASSERT_IS_NOT_NULL(query_resp);
+
+    //cleanup
+    prov_sc_destroy(sc);
+    queryResponse_free(query_resp);
+}
+
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_095: [ A 'POST' REST call shall be issued to run the query operation on the Provisioning Service ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_097: [ The data from the query response shall populate query_resp_ptr ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_099: [ A continuation token (if any) shall populate cont_token_ptr ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_100: [ Upon success, prov_sc_query_device_registration_state shall return 0 ]*/
+TEST_FUNCTION(prov_sc_query_device_registration_state_success_paging_no_given_token_w_token_return)
+{
+    //arrange
+    PROVISIONING_SERVICE_CLIENT_HANDLE sc = prov_sc_create_from_connection_string(TEST_CONNECTION_STRING);
+    PROVISIONING_QUERY_SPECIFICATION qs = { 0 };
+    qs.page_size = 5;
+    qs.registration_id = TEST_REGID;
+    qs.version = PROVISIONING_QUERY_SPECIFICATION_VERSION_1;
+
+    char* cont_token = NULL;
+    PROVISIONING_QUERY_RESPONSE* query_resp = NULL;
+    umock_c_reset_all_calls();
+
+    expected_calls_construct_registration_path(true);
+    expected_calls_construct_http_headers(NO_ETAG, HTTP_CLIENT_REQUEST_POST);
+    expected_calls_add_query_headers(true, false);
+    STRICT_EXPECTED_CALL(STRING_c_str(IGNORED_PTR_ARG)); //cannot fail
+    expected_calls_rest_call(HTTP_CLIENT_REQUEST_POST, RESPONSE);
+    //response headers
+    STRICT_EXPECTED_CALL(HTTPHeaders_FindHeaderValue(IGNORED_PTR_ARG, IGNORED_PTR_ARG)).SetReturn(TEST_CONT_TOKEN); //cannot fail
+    STRICT_EXPECTED_CALL(HTTPHeaders_FindHeaderValue(IGNORED_PTR_ARG, IGNORED_PTR_ARG)).SetReturn(QUERY_RESPONSE_HEADER_ITEM_TYPE_VALUE_DEVICE_REGISTRATION_STATE);
+    //end response headers
+    STRICT_EXPECTED_CALL(queryType_stringToEnum(QUERY_RESPONSE_HEADER_ITEM_TYPE_VALUE_DEVICE_REGISTRATION_STATE)); //cannot fail
+    STRICT_EXPECTED_CALL(queryResponse_deserializeFromJson(IGNORED_PTR_ARG, QUERY_TYPE_DEVICE_REGISTRATION_STATE));
+    STRICT_EXPECTED_CALL(gballoc_free(IGNORED_PTR_ARG)); //cannot fail
+    STRICT_EXPECTED_CALL(HTTPHeaders_Free(IGNORED_PTR_ARG)); //cannot fail
+    STRICT_EXPECTED_CALL(STRING_delete(IGNORED_PTR_ARG)); //cannot fail
+    STRICT_EXPECTED_CALL(gballoc_free(IGNORED_PTR_ARG)); //cannot fail
+
+    //act
+    int res = prov_sc_query_device_registration_state(sc, &qs, &cont_token, &query_resp);
+
+    //assert
+    ASSERT_ARE_EQUAL(char_ptr, umock_c_get_expected_calls(), umock_c_get_actual_calls());
+    ASSERT_ARE_EQUAL(int, 0, res);
+    ASSERT_IS_NOT_NULL(cont_token);
+    ASSERT_IS_TRUE(cont_token == TEST_CONT_TOKEN);
+    ASSERT_IS_NOT_NULL(query_resp);
+
+    //cleanup
+    prov_sc_destroy(sc);
+    queryResponse_free(query_resp);
+}
+
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_095: [ A 'POST' REST call shall be issued to run the query operation on the Provisioning Service ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_097: [ The data from the query response shall populate query_resp_ptr ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_099: [ A continuation token (if any) shall populate cont_token_ptr ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_100: [ Upon success, prov_sc_query_device_registration_state shall return 0 ]*/
+TEST_FUNCTION(prov_sc_query_device_registration_state_success_paging_given_token_no_token_return)
+{
+    //arrange
+    PROVISIONING_SERVICE_CLIENT_HANDLE sc = prov_sc_create_from_connection_string(TEST_CONNECTION_STRING);
+    PROVISIONING_QUERY_SPECIFICATION qs = { 0 };
+    qs.page_size = 5;
+    qs.registration_id = TEST_REGID;
+    qs.version = PROVISIONING_QUERY_SPECIFICATION_VERSION_1;
+
+    char* cont_token = (char *)TEST_CONT_TOKEN;
+    PROVISIONING_QUERY_RESPONSE* query_resp = NULL;
+    umock_c_reset_all_calls();
+
+    expected_calls_construct_registration_path(true);
+    expected_calls_construct_http_headers(NO_ETAG, HTTP_CLIENT_REQUEST_POST);
+    expected_calls_add_query_headers(true, true);
+    STRICT_EXPECTED_CALL(STRING_c_str(IGNORED_PTR_ARG)); //cannot fail
+    expected_calls_rest_call(HTTP_CLIENT_REQUEST_POST, RESPONSE);
+    //response headers
+    STRICT_EXPECTED_CALL(HTTPHeaders_FindHeaderValue(IGNORED_PTR_ARG, IGNORED_PTR_ARG)).SetReturn(NULL); //cannot fail
+    STRICT_EXPECTED_CALL(HTTPHeaders_FindHeaderValue(IGNORED_PTR_ARG, IGNORED_PTR_ARG)).SetReturn(QUERY_RESPONSE_HEADER_ITEM_TYPE_VALUE_DEVICE_REGISTRATION_STATE);
+    //end response headers
+    STRICT_EXPECTED_CALL(queryType_stringToEnum(QUERY_RESPONSE_HEADER_ITEM_TYPE_VALUE_DEVICE_REGISTRATION_STATE)); //cannot fail
+    STRICT_EXPECTED_CALL(queryResponse_deserializeFromJson(IGNORED_PTR_ARG, QUERY_TYPE_DEVICE_REGISTRATION_STATE));
+    STRICT_EXPECTED_CALL(gballoc_free(IGNORED_PTR_ARG)); //cannot fail
+    STRICT_EXPECTED_CALL(HTTPHeaders_Free(IGNORED_PTR_ARG)); //cannot fail
+    STRICT_EXPECTED_CALL(STRING_delete(IGNORED_PTR_ARG)); //cannot fail
+    STRICT_EXPECTED_CALL(gballoc_free(IGNORED_PTR_ARG)); //cannot fail
+
+    //act
+    int res = prov_sc_query_device_registration_state(sc, &qs, &cont_token, &query_resp);
+
+    //assert
+    ASSERT_ARE_EQUAL(char_ptr, umock_c_get_expected_calls(), umock_c_get_actual_calls());
+    ASSERT_ARE_EQUAL(int, 0, res);
+    ASSERT_IS_NULL(cont_token);
+    ASSERT_IS_NOT_NULL(query_resp);
+
+    //cleanup
+    prov_sc_destroy(sc);
+    queryResponse_free(query_resp);
+}
+
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_095: [ A 'POST' REST call shall be issued to run the query operation on the Provisioning Service ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_097: [ The data from the query response shall populate query_resp_ptr ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_099: [ A continuation token (if any) shall populate cont_token_ptr ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_100: [ Upon success, prov_sc_query_device_registration_state shall return 0 ]*/
+TEST_FUNCTION(prov_sc_query_device_registration_state_success_paging_given_token_w_token_return)
+{
+    //arrange
+    PROVISIONING_SERVICE_CLIENT_HANDLE sc = prov_sc_create_from_connection_string(TEST_CONNECTION_STRING);
+    PROVISIONING_QUERY_SPECIFICATION qs = { 0 };
+    qs.page_size = 5;
+    qs.registration_id = TEST_REGID;
+    qs.version = PROVISIONING_QUERY_SPECIFICATION_VERSION_1;
+
+    char* cont_token = (char *)TEST_CONT_TOKEN;
+    PROVISIONING_QUERY_RESPONSE* query_resp = NULL;
+    umock_c_reset_all_calls();
+
+    expected_calls_construct_registration_path(true);
+    expected_calls_construct_http_headers(NO_ETAG, HTTP_CLIENT_REQUEST_POST);
+    expected_calls_add_query_headers(true, true);
+    STRICT_EXPECTED_CALL(STRING_c_str(IGNORED_PTR_ARG)); //cannot fail
+    expected_calls_rest_call(HTTP_CLIENT_REQUEST_POST, RESPONSE);
+    //response headers
+    STRICT_EXPECTED_CALL(HTTPHeaders_FindHeaderValue(IGNORED_PTR_ARG, IGNORED_PTR_ARG)).SetReturn(TEST_CONT_TOKEN2); //cannot fail
+    STRICT_EXPECTED_CALL(HTTPHeaders_FindHeaderValue(IGNORED_PTR_ARG, IGNORED_PTR_ARG)).SetReturn(QUERY_RESPONSE_HEADER_ITEM_TYPE_VALUE_DEVICE_REGISTRATION_STATE);
+    //end response headers
+    STRICT_EXPECTED_CALL(queryType_stringToEnum(QUERY_RESPONSE_HEADER_ITEM_TYPE_VALUE_DEVICE_REGISTRATION_STATE)); //cannot fail
+    STRICT_EXPECTED_CALL(queryResponse_deserializeFromJson(IGNORED_PTR_ARG, QUERY_TYPE_DEVICE_REGISTRATION_STATE));
+    STRICT_EXPECTED_CALL(gballoc_free(IGNORED_PTR_ARG)); //cannot fail
+    STRICT_EXPECTED_CALL(HTTPHeaders_Free(IGNORED_PTR_ARG)); //cannot fail
+    STRICT_EXPECTED_CALL(STRING_delete(IGNORED_PTR_ARG)); //cannot fail
+    STRICT_EXPECTED_CALL(gballoc_free(IGNORED_PTR_ARG)); //cannot fail
+
+    //act
+    int res = prov_sc_query_device_registration_state(sc, &qs, &cont_token, &query_resp);
+
+    //assert
+    ASSERT_ARE_EQUAL(char_ptr, umock_c_get_expected_calls(), umock_c_get_actual_calls());
+    ASSERT_ARE_EQUAL(int, 0, res);
+    ASSERT_IS_TRUE(cont_token == TEST_CONT_TOKEN2);
+    ASSERT_IS_NOT_NULL(query_resp);
+
+    //cleanup
+    prov_sc_destroy(sc);
+    queryResponse_free(query_resp);
+}
+
+/*---Note that this failure test covers all failures from other cases by virtue of making all possible calls--/*
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_096: [ If the 'POST' REST call fails, prov_sc_query_device_registration_state shall fail and return a non-zero value ]*/
+/*Tests_PROVISIONING_SERVICE_CLIENT_22_098: [ If populating query_resp_ptr with the retrieved data fails, prov_sc_query_device_registration_state shall fail and return a non-zero value ]*/
+TEST_FUNCTION(prov_sc_query_device_registration_state_success_paging_given_token_w_token_return_ERROR)
+{
+    //arrange
+    int negativeTestsInitResult = umock_c_negative_tests_init();
+    ASSERT_ARE_EQUAL(int, 0, negativeTestsInitResult);
+
+    PROVISIONING_SERVICE_CLIENT_HANDLE sc = prov_sc_create_from_connection_string(TEST_CONNECTION_STRING);
+    PROVISIONING_QUERY_SPECIFICATION qs = { 0 };
+    qs.page_size = 5;
+    qs.registration_id = TEST_REGID;
+    qs.version = PROVISIONING_QUERY_SPECIFICATION_VERSION_1;
+
+    char* cont_token = (char *)TEST_CONT_TOKEN;
+    PROVISIONING_QUERY_RESPONSE* query_resp = NULL;
+    umock_c_reset_all_calls();
+
+    expected_calls_construct_registration_path(true);
+    expected_calls_construct_http_headers(NO_ETAG, HTTP_CLIENT_REQUEST_POST); //10
+    expected_calls_add_query_headers(true, true); //12
+    STRICT_EXPECTED_CALL(STRING_c_str(IGNORED_PTR_ARG)); //cannot fail
+    expected_calls_rest_call(HTTP_CLIENT_REQUEST_POST, RESPONSE);
+    //response headers
+    STRICT_EXPECTED_CALL(HTTPHeaders_FindHeaderValue(IGNORED_PTR_ARG, IGNORED_PTR_ARG)).SetReturn(TEST_CONT_TOKEN2); //cannot "fail"
+    STRICT_EXPECTED_CALL(HTTPHeaders_FindHeaderValue(IGNORED_PTR_ARG, IGNORED_PTR_ARG)).SetReturn(QUERY_RESPONSE_HEADER_ITEM_TYPE_VALUE_DEVICE_REGISTRATION_STATE); //cannot "fail"
+    //end response headers
+    STRICT_EXPECTED_CALL(queryType_stringToEnum(QUERY_RESPONSE_HEADER_ITEM_TYPE_VALUE_DEVICE_REGISTRATION_STATE));
+    STRICT_EXPECTED_CALL(queryResponse_deserializeFromJson(IGNORED_PTR_ARG, QUERY_TYPE_DEVICE_REGISTRATION_STATE));
+    STRICT_EXPECTED_CALL(gballoc_free(IGNORED_PTR_ARG)); //cannot fail
+    STRICT_EXPECTED_CALL(HTTPHeaders_Free(IGNORED_PTR_ARG)); //cannot fail
+    STRICT_EXPECTED_CALL(STRING_delete(IGNORED_PTR_ARG)); //cannot fail
+    STRICT_EXPECTED_CALL(gballoc_free(IGNORED_PTR_ARG)); //cannot fail
+
+    umock_c_negative_tests_snapshot();
+
+    size_t calls_cannot_fail[] = { 1, 2, 4, 9, 11, 14, 18, 20, 23, 24, 25, 26, 29, 30, 31, 32 };
+    size_t num_cannot_fail = sizeof(calls_cannot_fail) / sizeof(calls_cannot_fail[0]);
+    size_t count = umock_c_negative_tests_call_count();
+    size_t test_num = 0;
+    size_t test_max = count - num_cannot_fail;
+
+    for (size_t index = 0; index < count; index++)
+    {
+        if (should_skip_index(index, calls_cannot_fail, num_cannot_fail) != 0)
+            continue;
+        test_num++;
+
+        char tmp_msg[128];
+        sprintf(tmp_msg, "prov_sc_query_device_registration_state_success_paging_given_token_w_token_return_ERROR failure in test %zu/%zu", test_num, test_max);
+
+        umock_c_negative_tests_reset();
+        umock_c_negative_tests_fail_call(index);
+
+        //act
+        int res = prov_sc_query_device_registration_state(sc, &qs, &cont_token, &query_resp);
+
+        //assert
+        ASSERT_ARE_NOT_EQUAL_WITH_MSG(int, res, 0, tmp_msg);
+
+        g_uhttp_client_dowork_call_count = 0;
+    }
+
+    //cleanup
+    prov_sc_destroy(sc);
 }
 
 END_TEST_SUITE(provisioning_service_client_ut);

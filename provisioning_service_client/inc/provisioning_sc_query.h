@@ -14,20 +14,22 @@ extern "C" {
 #include "parson.h"
 
 #define PROVISIONING_QUERY_SPECIFICATION_VERSION_1 (int)1
+#define NO_MAX_PAGE_SIZE (int)0
     
 #define PROVISIONING_QUERY_TYPE_VALUES \
-    QUERY_INVALID, \
-    QUERY_INDIVIDUAL_ENROLLMENT, \
-    QUERY_ENROLLMENT_GROUP, \
-    QUERY_DEVICE_REGISTRATION_STATE
+    QUERY_TYPE_INVALID, \
+    QUERY_TYPE_INDIVIDUAL_ENROLLMENT, \
+    QUERY_TYPE_ENROLLMENT_GROUP, \
+    QUERY_TYPE_DEVICE_REGISTRATION_STATE
 
 DEFINE_ENUM(PROVISIONING_QUERY_TYPE, PROVISIONING_QUERY_TYPE_VALUES);
 
 typedef struct PROVISIONING_QUERY_SPECIFICATION_TAG
 {
     int version;
-    char* query_string;
-    size_t* page_size;
+    const char* query_string;
+    const char* registration_id;
+    size_t page_size;
 } PROVISIONING_QUERY_SPECIFICATION;
 
 typedef struct PROVISIONING_QUERY_RESPONSE_TAG
@@ -37,9 +39,11 @@ typedef struct PROVISIONING_QUERY_RESPONSE_TAG
         ENROLLMENT_GROUP_HANDLE* eg;
         DEVICE_REGISTRATION_STATE_HANDLE* drs;
     } response_arr;
-    size_t repsonse_arr_size;
+    size_t response_arr_size;
     PROVISIONING_QUERY_TYPE response_arr_type;
 } PROVISIONING_QUERY_RESPONSE;
+
+MOCKABLE_FUNCTION(, void, queryResponse_free, PROVISIONING_QUERY_RESPONSE*, query_resp);
 
 /*---INTERNAL USAGE ONLY---*/
 MOCKABLE_FUNCTION(, PROVISIONING_QUERY_TYPE, queryType_stringToEnum, const char*, string);

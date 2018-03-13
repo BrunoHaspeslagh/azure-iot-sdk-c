@@ -4,6 +4,7 @@
 #include <stdlib.h>  
 
 #include "azure_c_shared_utility/xlogging.h"
+#include "azure_c_shared_utility/gballoc.h"
 #include "azure_c_shared_utility/crt_abstractions.h"
 
 #include "provisioning_sc_query.h"
@@ -15,30 +16,42 @@
 void queryResponse_free(PROVISIONING_QUERY_RESPONSE* query_resp)
 {
     size_t i;
-
-    if (query_resp->response_arr_type == QUERY_INDIVIDUAL_ENROLLMENT)
+    if (query_resp != NULL)
     {
-        for (i = 0; i < query_resp->repsonse_arr_size; i++)
+        if (query_resp->response_arr_type == QUERY_TYPE_INDIVIDUAL_ENROLLMENT)
         {
-            individualEnrollment_destroy(query_resp->response_arr.ie[i]);
+            if (query_resp->response_arr.ie != NULL)
+            {
+                for (i = 0; i < query_resp->response_arr_size; i++)
+                {
+                    individualEnrollment_destroy(query_resp->response_arr.ie[i]);
+                }
+                free(query_resp->response_arr.ie);
+            }
         }
-        free(query_resp->response_arr.ie);
-    }
-    else if (query_resp->response_arr_type == QUERY_ENROLLMENT_GROUP)
-    {
-        for (i = 0; i < query_resp->repsonse_arr_size; i++)
+        else if (query_resp->response_arr_type == QUERY_TYPE_ENROLLMENT_GROUP)
         {
-            enrollmentGroup_destroy(query_resp->response_arr.eg[i]);
+            if (query_resp->response_arr.eg != NULL)
+            {
+                for (i = 0; i < query_resp->response_arr_size; i++)
+                {
+                    enrollmentGroup_destroy(query_resp->response_arr.eg[i]);
+                }
+                free(query_resp->response_arr.eg);
+            }
         }
-        free(query_resp->response_arr.eg);
-    }
-    else if (query_resp->response_arr_type == QUERY_DEVICE_REGISTRATION_STATE)
-    {
-        for (i = 0; i < query_resp->repsonse_arr_size; i++)
+        else if (query_resp->response_arr_type == QUERY_TYPE_DEVICE_REGISTRATION_STATE)
         {
-            deviceRegistrationState_destroy(query_resp->response_arr.drs[i]);
+            if (query_resp->response_arr.drs != NULL)
+            {
+                for (i = 0; i < query_resp->response_arr_size; i++)
+                {
+                    deviceRegistrationState_destroy(query_resp->response_arr.drs[i]);
+                }
+                free(query_resp->response_arr.drs);
+            }
         }
-        free(query_resp->response_arr.drs);
+        free(query_resp);
     }
 }
 
@@ -63,6 +76,8 @@ static JSON_Value* querySpecification_toJson(const PROVISIONING_QUERY_SPECIFICAT
     else if (json_object_set_string(root_object, QUERY_SPECIFICATION_JSON_KEY_QUERY, query_spec->query_string) != JSONSuccess)
     {
         LogError("Failed to set %s in JSON string", QUERY_SPECIFICATION_JSON_KEY_QUERY);
+        json_value_free(root_value);
+        root_value = NULL;
     }
 
     return root_value;
@@ -73,19 +88,19 @@ static int queryResponse_get_type_specific_deserialization_info(PROVISIONING_QUE
     int result;
     PROVISIONING_QUERY_TYPE type = new_query_resp->response_arr_type;
 
-    if (type == QUERY_INDIVIDUAL_ENROLLMENT)
+    if (type == QUERY_TYPE_INDIVIDUAL_ENROLLMENT)
     {
         *response_arr_ptr_ptr = (void***)&(new_query_resp->response_arr.ie);
         *fromJson = individualEnrollment_fromJson;
         result = 0;
     }
-    else if (type == QUERY_ENROLLMENT_GROUP)
+    else if (type == QUERY_TYPE_ENROLLMENT_GROUP)
     {
         *response_arr_ptr_ptr = (void***)&(new_query_resp->response_arr.eg);
         *fromJson = enrollmentGroup_fromJson;
         result = 0;
     }
-    else if (type == QUERY_DEVICE_REGISTRATION_STATE)
+    else if (type == QUERY_TYPE_DEVICE_REGISTRATION_STATE)
     {
         *response_arr_ptr_ptr = (void***)&(new_query_resp->response_arr.drs);
         *fromJson = deviceRegistrationState_fromJson;
@@ -117,27 +132,31 @@ static PROVISIONING_QUERY_RESPONSE* queryResponse_fromJson(JSON_Array* root_arra
     {
         memset(new_query_resp, 0, sizeof(PROVISIONING_QUERY_RESPONSE));
         new_query_resp->response_arr_type = type;
+        new_query_resp->response_arr_size = json_array_get_count(root_array);
 
-        if ((new_query_resp->repsonse_arr_size = json_array_get_count(root_array)) < 0)
+        void*** generic_response_arr_ptr;
+        FROM_JSON_FUNCTION fromJson;
+
+        if (queryResponse_get_type_specific_deserialization_info(new_query_resp, &generic_response_arr_ptr, &fromJson) != 0)
         {
-            LogError("Retreiving array size failed");
+            LogError("Unable to deserialize that array type");
             queryResponse_free(new_query_resp);
             new_query_resp = NULL;
         }
         else
         {
-            void*** generic_response_arr_ptr;
-            FROM_JSON_FUNCTION fromJson;
-
-            if (queryResponse_get_type_specific_deserialization_info(new_query_resp, &generic_response_arr_ptr, &fromJson) != 0)
+            if (new_query_resp->response_arr_size <= 0)
             {
-                LogError("Unable to deserialize that array type");
-                queryResponse_free(new_query_resp);
-                new_query_resp = NULL;
+                *generic_response_arr_ptr = NULL;
             }
             else
             {
-                *generic_response_arr_ptr = struct_array_fromJson(root_array, new_query_resp->repsonse_arr_size, fromJson);
+                if ((*generic_response_arr_ptr = struct_array_fromJson(root_array, new_query_resp->response_arr_size, fromJson)) == NULL)
+                {
+                    LogError("Failed to deserialize array of query results");
+                    queryResponse_free(new_query_resp);
+                    new_query_resp = NULL;
+                }
             }
         }
     }
@@ -151,7 +170,7 @@ char* querySpecification_serializeToJson(PROVISIONING_QUERY_SPECIFICATION* query
     char* serialized_string = NULL;
     JSON_Value* root_value = NULL;
 
-    if (query_spec == NULL || query_spec->query_string == NULL)
+    if (query_spec == NULL)
     {
         LogError("Invalid query specification");
     }
@@ -196,13 +215,18 @@ PROVISIONING_QUERY_RESPONSE* queryResponse_deserializeFromJson(const char* json_
      {
          LogError("Cannot deserialize NULL");
      }
+     else if (type == QUERY_TYPE_INVALID)
+     {
+         LogError("Invalid query type");
+     }
      else if ((root_value = json_parse_string(json_string)) == NULL)
      {
          LogError("Parsing JSON string failed");
      }
-     else if ((root_array = json_value_get_array(root_value)) == NULL) //heres the error
+     else if ((root_array = json_value_get_array(root_value)) == NULL)
      {
          LogError("Creating JSON array failed");
+         json_value_free(root_value);
      }
      else
      {
@@ -221,21 +245,25 @@ PROVISIONING_QUERY_TYPE queryType_stringToEnum(const char* string)
 {
     PROVISIONING_QUERY_TYPE result;
 
-    if (strcmp(string, QUERY_RESPONSE_HEADER_ITEM_TYPE_VALUE_INDIVIDUAL_ENROLLMENT) == 0)
+    if (string == NULL)
     {
-        result = QUERY_INDIVIDUAL_ENROLLMENT;
+        result = QUERY_TYPE_INVALID;
+    }
+    else if (strcmp(string, QUERY_RESPONSE_HEADER_ITEM_TYPE_VALUE_INDIVIDUAL_ENROLLMENT) == 0)
+    {
+        result = QUERY_TYPE_INDIVIDUAL_ENROLLMENT;
     }
     else if (strcmp(string, QUERY_RESPONSE_HEADER_ITEM_TYPE_VALUE_ENROLLMENT_GROUP) == 0)
     {
-        result = QUERY_ENROLLMENT_GROUP;
+        result = QUERY_TYPE_ENROLLMENT_GROUP;
     }
     else if (strcmp(string, QUERY_RESPONSE_HEADER_ITEM_TYPE_VALUE_DEVICE_REGISTRATION_STATE) == 0)
     {
-        result = QUERY_DEVICE_REGISTRATION_STATE;
+        result = QUERY_TYPE_DEVICE_REGISTRATION_STATE;
     }
     else
     {
-        result = QUERY_INVALID;
+        result = QUERY_TYPE_INVALID;
     }
 
     return result;
